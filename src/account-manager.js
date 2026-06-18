@@ -65,7 +65,13 @@ export class AccountManager {
       if (next) return next;
     }
     if (this._isAvailable(current)) {
-      return current;
+      // A strictly higher-priority (lower value) available account preempts a
+      // healthy current one. Within the same priority tier we stay put, so the
+      // common case (all accounts at the default priority 0) is unchanged and
+      // never thrashes — preemption only triggers when priorities differ.
+      const betterExists = this.accounts.some(a =>
+        this._isAvailable(a) && (a.priority || 0) < (current.priority || 0));
+      return betterExists ? this._selectNext() : current;
     }
     return this._selectNext();
   }

@@ -56,3 +56,26 @@ test('exhausted highest-priority account is skipped, next priority wins', () => 
   exhaust(am, 0);
   assert.equal(am._selectNext().name, 'b');
 });
+
+test('getActiveAccount preempts a healthy current account for a higher-priority one', () => {
+  const am = new AccountManager([oauth('a', { priority: 0 }), oauth('b', { priority: 1 })], 0.98);
+  am.currentIndex = 1; // currently on the lower-priority account
+  assert.equal(am.getActiveAccount().name, 'a');
+  assert.equal(am.currentIndex, 0);
+});
+
+test('getActiveAccount stays sticky within the same priority tier (no thrash)', () => {
+  const am = new AccountManager([oauth('a', { priority: 0 }), oauth('b', { priority: 0 })], 0.98);
+  am.currentIndex = 0;
+  // b has a sooner weekly reset, but same priority → must NOT switch away from a.
+  am.accounts[0].quota.unified7dReset = 5000;
+  am.accounts[1].quota.unified7dReset = 1000;
+  assert.equal(am.getActiveAccount().name, 'a');
+  assert.equal(am.currentIndex, 0);
+});
+
+test('common case: all-equal priority leaves getActiveAccount on the healthy current account', () => {
+  const am = new AccountManager([oauth('a'), oauth('b'), oauth('c')], 0.98);
+  am.currentIndex = 2;
+  assert.equal(am.getActiveAccount().name, 'c'); // unchanged — no preemption when priorities tie
+});
