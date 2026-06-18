@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath } from './config.js';
+import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath, loadState, saveState } from './config.js';
 import { AccountManager } from './account-manager.js';
 import { createProxyServer } from './server.js';
 import { importCredentials, loginOAuth, fetchProfile, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
@@ -94,6 +94,21 @@ async function serverCommand() {
   const threshold = config.switchThreshold || 0.98;
   const accountManager = new AccountManager(accounts, threshold);
 
+  // Restore quota observed in a previous run so a restart doesn't lose rotation
+  // state (passive — we never call the API to re-learn it). Stale windows are
+  // cleared automatically on first use by _clearExpiredQuotas.
+  const savedState = await loadState().catch(err => {
+    console.error(`[TeamClaude] Could not read saved state: ${err.message}`);
+    return null;
+  });
+  if (savedState?.quota) accountManager.restoreQuotaState(savedState.quota);
+
+  // Periodically persist quota (and once more on shutdown) to the state file.
+  const persistQuotaState = () =>
+    saveState({ quota: accountManager.exportQuotaState() })
+      .catch(err => console.error(`[TeamClaude] Failed to save quota state: ${err.message}`));
+  let quotaSaveInterval = null;
+
   // Persist refreshed tokens back to config (re-read from disk to avoid clobbering
   // accounts added externally, e.g. by `teamclaude import` while server is running)
   accountManager.onTokenRefresh((idx, newTokens) => {
@@ -154,7 +169,11 @@ async function serverCommand() {
         if (!diskConfig) return 0;
         return syncAccountsFromDisk(diskConfig, config, accountManager);
       },
-      onQuit: () => { server.close(() => process.exit(0)); },
+      onQuit: async () => {
+        if (quotaSaveInterval) clearInterval(quotaSaveInterval);
+        await persistQuotaState();
+        server.close(() => process.exit(0));
+      },
     });
     hooks = {
       onRequestStart: (id, info) => tui.onRequestStart(id, info),
@@ -200,15 +219,19 @@ async function serverCommand() {
     }
   });
 
+  // Persist quota every minute; unref so it never keeps the process alive.
+  quotaSaveInterval = setInterval(persistQuotaState, 60_000);
+  quotaSaveInterval.unref?.();
+
   if (!tui) {
-    process.on('SIGINT', () => {
+    const shutdown = async () => {
       console.log('\n[TeamClaude] Shutting down...');
+      clearInterval(quotaSaveInterval);
+      await persistQuotaState();
       server.close(() => process.exit(0));
-    });
-    process.on('SIGTERM', () => {
-      console.log('\n[TeamClaude] Shutting down...');
-      server.close(() => process.exit(0));
-    });
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   }
 }
 

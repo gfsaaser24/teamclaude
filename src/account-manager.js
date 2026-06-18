@@ -1,4 +1,13 @@
 import { refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
+import { sameIdentity } from './identity.js';
+
+// Quota fields that survive a restart: utilization levels and their reset
+// windows, learned passively from upstream responses. Transient/derived state
+// (probing, requalify, rateLimitedUntil) is intentionally excluded.
+const PERSISTED_QUOTA_FIELDS = [
+  'unified5h', 'unified7d', 'unified5hReset', 'unified7dReset', 'unifiedStatus',
+  'tokensLimit', 'tokensRemaining', 'requestsLimit', 'requestsRemaining', 'resetsAt',
+];
 
 function emptyQuota() {
   return {
@@ -463,6 +472,36 @@ export class AccountManager {
       this.currentIndex = Math.max(0, this.accounts.length - 1);
     } else if (this.currentIndex > index) {
       this.currentIndex--;
+    }
+  }
+
+  /**
+   * Serialize persistable quota state for all accounts (no credentials), keyed
+   * by account identity so it can be matched back after a restart.
+   */
+  exportQuotaState() {
+    return this.accounts.map(a => {
+      const quota = {};
+      for (const f of PERSISTED_QUOTA_FIELDS) quota[f] = a.quota[f];
+      return { accountUuid: a.accountUuid, orgUuid: a.orgUuid, orgName: a.orgName, name: a.name, quota };
+    });
+  }
+
+  /**
+   * Restore quota learned in a previous run. Matches saved entries to accounts
+   * by identity. Stale windows are not special-cased here — _clearExpiredQuotas
+   * wipes any restored window whose reset time has already passed on first use.
+   */
+  restoreQuotaState(saved) {
+    if (!Array.isArray(saved)) return;
+    for (const account of this.accounts) {
+      const match = saved.find(s => sameIdentity(s, account));
+      if (!match || !match.quota) continue;
+      for (const f of PERSISTED_QUOTA_FIELDS) {
+        if (match.quota[f] != null) account.quota[f] = match.quota[f];
+      }
+      // We already know this account's weekly window, so it isn't "probing".
+      if (account.quota.unified7dReset != null) account.probing = false;
     }
   }
 

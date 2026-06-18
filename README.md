@@ -15,6 +15,7 @@ Sits transparently between Claude Code and the Anthropic API, managing multiple 
 - **Hot-reload accounts** — add accounts via `import` or `login` while the server is running, press **R** to pick them up
 - **Org-aware accounts** — one email can hold multiple accounts across different organizations (e.g. corp + personal); dedup is keyed on account + org, and names disambiguate as `email (Org)`
 - **Rotation priority** — pin a preferred account order with `teamclaude priority`
+- **Quota persistence** — observed quota survives restarts (saved to a sibling state file), so rotation state isn't lost on restart; stale windows are discarded automatically
 - **Request logging** — optional full request/response logging for debugging
 - **Zero dependencies** — uses only Node.js built-in modules
 
@@ -152,6 +153,8 @@ teamclaude server --log-to /tmp/requests
 ## Configuration
 
 Config is stored at `~/.config/teamclaude.json` (or `$XDG_CONFIG_HOME/teamclaude.json`). A random proxy API key is generated on first use.
+
+Volatile runtime state (observed quota) is written separately to `teamclaude.state.json` alongside the config, so the config file stays clean and hand-editable. The state file is safe to delete — quota is simply re-learned from traffic.
 
 Override the config path with `TEAMCLAUDE_CONFIG`:
 
