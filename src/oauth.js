@@ -64,7 +64,13 @@ export async function refreshAccessToken(refreshToken, endpoint = DEFAULT_TOKEN_
           continue;
         }
         const text = await res.text();
-        throw new Error(`Token refresh failed (${res.status}): ${text}`);
+        const err = new Error(`Token refresh failed (${res.status}): ${text}`);
+        // Surface the HTTP status so callers can distinguish a genuine auth
+        // rejection (the refresh token is dead — re-login needed) from a
+        // transient server error. 5xx is retried above; reaching here with a 5xx
+        // means retries were exhausted, which is still transient, not auth.
+        err.status = res.status;
+        throw err;
       }
 
       const data = await res.json();

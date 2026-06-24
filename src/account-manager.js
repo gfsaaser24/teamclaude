@@ -30,7 +30,10 @@ function emptyQuota() {
 }
 
 export class AccountManager {
-  constructor(accounts, switchThreshold = 0.98) {
+  constructor(accounts, switchThreshold = 0.98, { refreshFn = refreshAccessToken } = {}) {
+    // Injectable for tests (mirrors Prober's probeFn); defaults to the real
+    // OAuth token refresh.
+    this._refreshFn = refreshFn;
     this.accounts = accounts.map((acct, index) => ({
       index,
       name: acct.name,
@@ -58,35 +61,114 @@ export class AccountManager {
     }));
     this.currentIndex = 0;
     this.switchThreshold = switchThreshold;
+    // When every account reads as over-quota we would otherwise refuse locally
+    // forever (a stale cached utilization is never re-validated because no
+    // request is ever sent). Instead, allow one real upstream probe at most this
+    // often to refresh the cached quota. See _selectProbe.
+    this.probeIntervalMs = 60_000;
+    this._nextProbeAt = 0;
   }
 
   /**
    * Get the best available account, rotating if the current one is near quota.
    * Returns null if all accounts are exhausted.
    */
-  getActiveAccount() {
+  getActiveAccount(exclude = null) {
     // Clear expired quotas across all accounts and switch proactively if a
     // session reset made a sooner-expiring account the better choice. This runs
     // on every request so the behaviour holds without the TUI render loop.
     this.refreshExpiredQuotas();
     const current = this.accounts[this.currentIndex];
+    // `exclude` is a per-request set of indices already tried this request (e.g.
+    // an account that just threw a transport error). It is never a persistent
+    // status change — the account stays healthy for the next request.
     // We just learned a probed account's weekly quota — re-evaluate which
     // account is best now that its limit is known.
     if (current && current.requalify) {
       current.requalify = false;
-      const next = this._selectNext();
+      const next = this._selectNext(exclude);
       if (next) return next;
     }
-    if (this._isAvailable(current)) {
+    if (this._isAvailable(current) && !exclude?.has(current.index)) {
       // A strictly higher-priority (lower value) available account preempts a
       // healthy current one. Within the same priority tier we stay put, so the
       // common case (all accounts at the default priority 0) is unchanged and
       // never thrashes — preemption only triggers when priorities differ.
       const betterExists = this.accounts.some(a =>
-        this._isAvailable(a) && (a.priority || 0) < (current.priority || 0));
-      return betterExists ? this._selectNext() : current;
+        this._isAvailable(a) && !exclude?.has(a.index) && (a.priority || 0) < (current.priority || 0));
+      return betterExists ? this._selectNext(exclude) : current;
     }
-    return this._selectNext();
+    const next = this._selectNext(exclude);
+    if (next) return next;
+    // No account is under the switch threshold. Before refusing locally, allow a
+    // throttled probe so a stale/poisoned cached quota can't pin us in a
+    // permanent "all exhausted" state — the probe's real response refreshes the
+    // quota (or upstream's own 429 converts soft exhaustion into a hard
+    // rate-limit hold). null here means the caller emits the synthetic 429.
+    return this._selectProbe(exclude);
+  }
+
+  _isProbeable(account) {
+    if (!account) return false;
+    // Never probe an account the operator has taken out of rotation, one whose
+    // token is broken, or one upstream has explicitly rate-limited — those are
+    // hard states, not stale soft-quota guesses.
+    if (account.disabled) return false;
+    if (account.status === 'error' || account.status === 'exhausted') return false;
+    if (account.status === 'throttled' && account.rateLimitedUntil
+        && Date.now() < account.rateLimitedUntil) return false;
+    return true;
+  }
+
+  /** Highest utilization across all known quota dimensions (0-1), used to pick
+   * the least-exhausted probe target. Mirrors the ratios in _isNearQuota. */
+  _maxUtilization(account) {
+    const q = account.quota;
+    let max = 0;
+    if (q.unified5h != null) max = Math.max(max, q.unified5h);
+    if (q.unified7d != null) max = Math.max(max, q.unified7d);
+    if (q.tokensLimit != null && q.tokensRemaining != null) {
+      max = Math.max(max, 1 - q.tokensRemaining / q.tokensLimit);
+    }
+    if (q.requestsLimit != null && q.requestsRemaining != null) {
+      max = Math.max(max, 1 - q.requestsRemaining / q.requestsLimit);
+    }
+    return max;
+  }
+
+  /**
+   * Pick an account to send a single revalidation probe upstream when every
+   * account reads as over the switch threshold. Throttled to one probe per
+   * probeIntervalMs so a genuinely-exhausted fleet isn't hammered — between
+   * probes this returns null and the caller falls back to the synthetic 429.
+   * The chosen account is the least-utilized probeable one (most likely to have
+   * stale headroom), so the refreshed quota corrects the cache fastest.
+   */
+  _selectProbe(exclude = null) {
+    const now = Date.now();
+    if (now < this._nextProbeAt) return null;
+
+    let best = null;
+    let bestPriority = Infinity;
+    let bestUsage = Infinity;
+    for (const account of this.accounts) {
+      if (exclude?.has(account.index)) continue;
+      if (!this._isProbeable(account)) continue;
+      const priority = account.priority || 0;
+      const usage = this._maxUtilization(account);
+      if (priority < bestPriority ||
+          (priority === bestPriority && usage < bestUsage)) {
+        bestPriority = priority;
+        bestUsage = usage;
+        best = account;
+      }
+    }
+    if (!best) return null;
+
+    this._nextProbeAt = now + this.probeIntervalMs;
+    this.currentIndex = best.index;
+    console.log(`[TeamClaude] All accounts over threshold — probing "${best.name}" to refresh quota`);
+    return best;
   }
 
   _isAvailable(account) {
@@ -243,13 +325,14 @@ export class AccountManager {
    * With all priorities at the default 0, this reduces to the weekly-reset
    * heuristic. Returns the account or null if none are available.
    */
-  _pickBestAvailable() {
+  _pickBestAvailable(exclude = null) {
     let best = null;
     let bestPriority = Infinity;
     let bestReset = Infinity;
 
     for (let i = 0; i < this.accounts.length; i++) {
       const account = this.accounts[i];
+      if (exclude?.has(account.index)) continue;
       // _isAvailable filters out accounts at/above the switch threshold, so the
       // soonest-expiring pick only ever lands on an account whose 5-hour quota
       // is still below 98%.
@@ -288,8 +371,8 @@ export class AccountManager {
     return best;
   }
 
-  _selectNext() {
-    const best = this._pickBestAvailable();
+  _selectNext(exclude = null) {
+    const best = this._pickBestAvailable(exclude);
     if (best) {
       const switched = best.index !== this.currentIndex;
       this.currentIndex = best.index;
@@ -307,6 +390,7 @@ export class AccountManager {
     let soonestTime = Infinity;
 
     for (const account of this.accounts) {
+      if (exclude?.has(account.index)) continue;
       const resetTime = account.rateLimitedUntil
         || account.quota.unified5hReset
         || account.quota.unified7dReset
@@ -473,7 +557,7 @@ export class AccountManager {
     account._refreshPromise = (async () => {
       console.log(`[TeamClaude] Refreshing token for account "${account.name}"...`);
       try {
-        const newTokens = await refreshAccessToken(account.refreshToken);
+        const newTokens = await this._refreshFn(account.refreshToken);
         account.credential = newTokens.accessToken;
         account.refreshToken = newTokens.refreshToken;
         account.expiresAt = newTokens.expiresAt;
@@ -481,10 +565,16 @@ export class AccountManager {
         this._onTokenRefresh?.(accountIndex, newTokens);
       } catch (err) {
         console.error(`[TeamClaude] Token refresh failed for "${account.name}": ${err.message}`);
-        // Only mark as error if the access token is actually expired;
-        // a failed proactive refresh shouldn't kill a still-valid token
-        if (!account.expiresAt || Date.now() >= account.expiresAt) {
+        // Reserve 'error' (which drops the account from rotation until re-login)
+        // for a GENUINE auth rejection: the refresh token itself is no longer
+        // valid — revoked, or invalidated by an account/plan migration. A
+        // transient failure (network, 5xx, timeout) must NOT sideline a healthy
+        // account: keep its current token and retry on the next request. This is
+        // what kept accounts wrongly "errored" after a momentary refresh blip.
+        const isAuthRejection = err.status === 400 || err.status === 401 || err.status === 403;
+        if (isAuthRejection) {
           account.status = 'error';
+          console.error(`[TeamClaude] Account "${account.name}" needs re-login (refresh token rejected) — run: teamclaude login`);
         }
       } finally {
         account._refreshPromise = null;

@@ -61,3 +61,51 @@ test('negative Retry-After is clamped and still terminates', async () => {
   assert.ok(upstreamHits >= 1 && upstreamHits <= 4, `expected bounded retries, got ${upstreamHits}`);
   assert.equal(accountStatus, 'throttled');
 });
+
+// Regression for #46: a stale/poisoned cached quota (e.g. 0.98 from before a
+// plan upgrade, with a reset still in the future) must NOT pin the proxy in a
+// permanent synthetic 429. The next request should probe upstream, succeed, and
+// refresh the cached quota — rather than refusing locally without any call.
+test('stale over-threshold quota is re-probed, not refused forever', async () => {
+  let upstreamHits = 0;
+  const upstream = http.createServer((_req, res) => {
+    upstreamHits++;
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      // Real headroom: the upgraded account is nowhere near its limit.
+      'anthropic-ratelimit-unified-7d-utilization': '0.10',
+    });
+    res.end(JSON.stringify({ type: 'message', role: 'assistant', content: [] }));
+  });
+  const upstreamPort = await listen(upstream);
+
+  const am = new AccountManager(
+    [{ name: 'a', type: 'oauth', accessToken: 't', refreshToken: 'r', expiresAt: Date.now() + 3600_000 }],
+    0.98,
+  );
+  // Simulate restoring a poisoned snapshot from teamclaude.state.json.
+  am.restoreQuotaState([
+    { name: 'a', quota: { unified7d: 0.98, unified7dReset: Date.now() + 7 * 24 * 3600_000 } },
+  ]);
+
+  const proxy = createProxyServer(am, {
+    proxy: { apiKey: 'k' },
+    upstream: `http://127.0.0.1:${upstreamPort}`,
+  });
+  const proxyPort = await listen(proxy);
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'x', messages: [] }),
+    });
+    await res.text();
+    assert.equal(res.status, 200, 'request should be proxied, not refused with a synthetic 429');
+    assert.equal(upstreamHits, 1, 'a real upstream probe should have been made');
+    assert.equal(am.accounts[0].quota.unified7d, 0.10, 'cached quota should be refreshed from the probe');
+  } finally {
+    proxy.close();
+    upstream.close();
+  }
+});

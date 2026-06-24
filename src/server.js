@@ -84,7 +84,7 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
       }
       const body = Buffer.concat(bodyChunks);
 
-      const ctx = { account: null, status: null };
+      const ctx = { account: null, status: null, tried: new Set() };
       try {
         await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx, logDir, sx);
       } catch (err) {
@@ -207,8 +207,8 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
   // from the default policy ('always' routes; 'off'/'429' start direct).
   const route = useSx === undefined ? !!(sx?.useByDefault()) : useSx;
 
-  // Select account
-  const account = accountManager.getActiveAccount();
+  // Select account, skipping any already tried (and failed) this request.
+  const account = accountManager.getActiveAccount(ctx.tried);
   if (!account) {
     ctx.status = 429;
     ctx.account = '(none available)';
@@ -235,6 +235,7 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
   // Refresh OAuth token if needed
   await accountManager.ensureTokenFresh(account.index);
   if (account.status === 'error' && retryCount < maxRetries) {
+    ctx.tried.add(account.index);
     return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
   }
 
@@ -400,8 +401,13 @@ async function forwardRequest(req, res, body, accountManager, upstream, retryCou
       return;
     }
 
+    // Any other thrown error is a transport/stream failure, NOT proof the
+    // account's credentials are bad — a bad credential comes back as a 401
+    // *response*, never a throw. So don't sideline the account (that would drop
+    // a healthy account from rotation until a credential change). Instead skip
+    // it for the rest of THIS request only and fail over to another account.
     if (retryCount < maxRetries && !res.headersSent) {
-      account.status = 'error';
+      ctx.tried.add(account.index);
       return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
     }
     ctx.status = 502;
