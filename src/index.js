@@ -16,6 +16,7 @@ import { TUI } from './tui.js';
 import { SxManager } from './sx.js';
 import { autoUpdate, checkForUpdate, currentVersion, runUpdate, installKind, PKG_NAME } from './updater.js';
 import { renderStatus } from './status-renderer.js';
+import { EventHub } from './events.js';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -247,8 +248,8 @@ async function serverCommand() {
     return added;
   };
 
+  const hub = new EventHub();
   let tui = null;
-  let hooks = {};
 
   if (useTUI) {
     tui = new TUI({
@@ -286,16 +287,74 @@ async function serverCommand() {
         server.close(() => process.exit(0));
       },
     });
-    hooks = {
-      onRequestStart: (id, info) => tui.onRequestStart(id, info),
-      onRequestModel: (id, info) => tui.onRequestModel(id, info),
-      onRequestRouted: (id, info) => tui.onRequestRouted(id, info),
-      onRequestEnd: (id, info) => tui.onRequestEnd(id, info),
-    };
   }
+
+  // Request lifecycle fans out to the TUI (when present) AND the event hub, so
+  // the desktop UI sees the same stream the TUI renders.
+  const hooks = {
+    onRequestStart: (id, info) => { tui?.onRequestStart(id, info); hub.emit('request-start', { reqId: id, ...info }); },
+    onRequestModel: (id, info) => { tui?.onRequestModel(id, info); hub.emit('request-model', { reqId: id, ...info }); },
+    onRequestRouted: (id, info) => { tui?.onRequestRouted(id, info); hub.emit('request-routed', { reqId: id, ...info }); },
+    onRequestEnd: (id, info) => { tui?.onRequestEnd(id, info); hub.emit('request-end', { reqId: id, ...info }); },
+  };
 
   // Expose reload to the proxy's control endpoint (works with or without TUI).
   hooks.reload = reloadAccounts;
+  hooks.handleEvents = (req, res) => hub.handleSSE(req, res);
+  hooks.getRecentEvents = () => hub.recent();
+
+  // Browser OAuth login driven from the desktop UI. Runs the same loginOAuth
+  // flow the CLI uses (it opens the browser and hosts the callback itself);
+  // progress is reported as oauth-* events so the caller can just watch SSE.
+  let oauthInFlight = false;
+  hooks.oauthLogin = async () => {
+    if (oauthInFlight) throw new Error('An OAuth login is already in progress');
+    oauthInFlight = true;
+    hub.emit('oauth-start', {});
+    (async () => {
+      try {
+        const creds = await loginOAuth({ onAuthUrl: url => hub.emit('oauth-url', { url }) });
+        const profile = await fetchProfile(creds.accessToken);
+        const profileOk = profile && !profile.error;
+        const account = {
+          name: (profileOk && profile.email) || null,
+          type: 'oauth',
+          source: 'desktop',
+          accountUuid: profileOk ? profile.accountUuid || null : null,
+          orgUuid: profileOk ? profile.orgUuid || null : null,
+          orgName: profileOk ? profile.orgName || null : null,
+          accessToken: creds.accessToken,
+          refreshToken: creds.refreshToken,
+          expiresAt: creds.expiresAt,
+        };
+        let savedName = null;
+        await atomicConfigUpdate(diskConfig => {
+          if (!account.name) {
+            const n = diskConfig.accounts.filter(a => a.name.startsWith('account-')).length + 1;
+            account.name = `account-${n}`;
+          }
+          let idx = diskConfig.accounts.findIndex(a => sameIdentity(a, account));
+          if (idx < 0) idx = diskConfig.accounts.findIndex(a => a.name === account.name);
+          if (idx >= 0) {
+            // Same account+org: refresh credentials, keep the existing name.
+            const prev = diskConfig.accounts[idx];
+            diskConfig.accounts[idx] = { ...prev, ...account, name: prev.name };
+            savedName = prev.name;
+          } else {
+            diskConfig.accounts.push(account);
+            savedName = account.name;
+          }
+        });
+        const added = await reloadAccounts();
+        hub.emit('oauth-complete', { account: savedName, added });
+      } catch (err) {
+        hub.emit('oauth-error', { error: err.message });
+      } finally {
+        oauthInFlight = false;
+      }
+    })();
+    return { started: true };
+  };
   hooks.getStatusExtra = () => ({
     server: {
       startedAt: new Date(serverStartedAt).toISOString(),
