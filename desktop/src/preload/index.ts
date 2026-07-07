@@ -1,22 +1,51 @@
-import { contextBridge } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
+import { contextBridge, ipcRenderer } from 'electron'
 
-// Custom APIs for renderer
-const api = {}
-
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
+function on(channel: string) {
+  return (cb: (payload: never) => void): (() => void) => {
+    const listener = (_e: unknown, payload: unknown): void => cb(payload as never)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
   }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
 }
+
+const tc = {
+  proxy: {
+    getState: () => ipcRenderer.invoke('tc:proxy:getState'),
+    start: () => ipcRenderer.invoke('tc:proxy:start'),
+    stop: () => ipcRenderer.invoke('tc:proxy:stop'),
+    restart: () => ipcRenderer.invoke('tc:proxy:restart'),
+    onState: on('tc:proxy-state'),
+  },
+  api: {
+    status: () => ipcRenderer.invoke('tc:api:status'),
+    recentEvents: () => ipcRenderer.invoke('tc:api:recentEvents'),
+    reload: () => ipcRenderer.invoke('tc:api:reload'),
+    oauthLogin: () => ipcRenderer.invoke('tc:api:oauthLogin'),
+    onEvent: on('tc:event'),
+  },
+  config: {
+    get: () => ipcRenderer.invoke('tc:config:get'),
+    setAccountDisabled: (name: string, disabled: boolean) => ipcRenderer.invoke('tc:config:setAccountDisabled', name, disabled),
+    setAccountPriority: (name: string, priority: number) => ipcRenderer.invoke('tc:config:setAccountPriority', name, priority),
+    removeAccount: (name: string) => ipcRenderer.invoke('tc:config:removeAccount', name),
+    setRoutes: (routes: unknown[]) => ipcRenderer.invoke('tc:config:setRoutes', routes),
+  },
+  launcher: {
+    list: () => ipcRenderer.invoke('tc:launcher:list'),
+    add: (p: unknown) => ipcRenderer.invoke('tc:launcher:add', p),
+    remove: (path: string) => ipcRenderer.invoke('tc:launcher:remove', path),
+    open: (path: string) => ipcRenderer.invoke('tc:launcher:open', path),
+    pickFolder: () => ipcRenderer.invoke('tc:launcher:pickFolder'),
+  },
+  settings: {
+    get: () => ipcRenderer.invoke('tc:settings:get'),
+    set: (partial: unknown) => ipcRenderer.invoke('tc:settings:set', partial),
+  },
+  window: {
+    setPinned: (pinned: boolean) => ipcRenderer.invoke('tc:window:setPinned', pinned),
+    hide: () => ipcRenderer.invoke('tc:window:hide'),
+  },
+}
+
+contextBridge.exposeInMainWorld('tc', tc)
+export type TcBridge = typeof tc
