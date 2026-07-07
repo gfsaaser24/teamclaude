@@ -73,6 +73,25 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         return;
       }
 
+      // Live event stream (SSE) — request lifecycle + oauth flow events for the
+      // desktop UI. 501 when running without an EventHub (e.g. some tests).
+      if (req.method === 'GET' && req.url === '/teamclaude/events') {
+        if (!hooks.handleEvents) {
+          res.writeHead(501, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'events not supported' }));
+          return;
+        }
+        hooks.handleEvents(req, res);
+        return;
+      }
+
+      // Recent-events backfill (same ring buffer the SSE hello frame sends).
+      if (req.method === 'GET' && req.url === '/teamclaude/log') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ events: hooks.getRecentEvents?.() || [] }));
+        return;
+      }
+
       // Reload endpoint — re-sync accounts from config without a restart. This
       // is the headless equivalent of pressing 'R' in the TUI. Local control
       // only (no upstream calls); the auth gate above already applies.
