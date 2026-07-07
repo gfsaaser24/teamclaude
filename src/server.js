@@ -92,6 +92,25 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         return;
       }
 
+      // Kick off a browser OAuth login on this machine. Progress is reported on
+      // the event stream (oauth-url / oauth-complete / oauth-error events).
+      if (req.method === 'POST' && req.url === '/teamclaude/oauth/login') {
+        if (!hooks.oauthLogin) {
+          res.writeHead(501, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'oauth login not supported' }));
+          return;
+        }
+        try {
+          const result = await hooks.oauthLogin();
+          res.writeHead(202, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...result }));
+        } catch (err) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err.message }));
+        }
+        return;
+      }
+
       // Reload endpoint — re-sync accounts from config without a restart. This
       // is the headless equivalent of pressing 'R' in the TUI. Local control
       // only (no upstream calls); the auth gate above already applies.

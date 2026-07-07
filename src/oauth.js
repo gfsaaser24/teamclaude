@@ -258,7 +258,7 @@ const OAUTH_SCOPES = 'org:create_api_key user:profile user:inference user:sessio
  * Perform OAuth login via browser with PKCE flow.
  * Opens the user's browser, waits for the callback, exchanges the code for tokens.
  */
-export async function loginOAuth() {
+export async function loginOAuth({ onAuthUrl } = {}) {
   // Generate PKCE
   const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
@@ -278,6 +278,8 @@ export async function loginOAuth() {
   authUrl.searchParams.set('code_challenge', codeChallenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
   authUrl.searchParams.set('state', state);
+
+  onAuthUrl?.(authUrl.toString());
 
   // Open browser
   console.log('Opening browser for authentication...');
