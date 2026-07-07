@@ -1,4 +1,4 @@
-import { app, globalShortcut } from 'electron'
+import { app, globalShortcut, type Tray } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import Store from 'electron-store'
 import { Supervisor } from './supervisor'
@@ -12,6 +12,7 @@ if (!app.requestSingleInstanceLock()) app.quit()
 
 const store = new Store<{ settings: AppSettings; projects: Project[] }>()
 let quitting = false
+let tray: Tray | null = null
 
 async function bootstrap(): Promise<void> {
   electronApp.setAppUserModelId('com.teamclaude.desktop')
@@ -39,7 +40,7 @@ async function bootstrap(): Promise<void> {
 
   registerIpc({ supervisor, client, store, getFlyout, setPinned, applySettings })
   createFlyout()
-  createTray({ supervisor, onToggle: toggleFlyout, onQuit: () => { quitting = true; app.quit() } })
+  tray = createTray({ supervisor, onToggle: toggleFlyout, onQuit: () => app.quit() })
 
   void supervisor.start()
 
@@ -58,4 +59,8 @@ async function bootstrap(): Promise<void> {
 }
 
 app.whenReady().then(bootstrap)
-app.on('will-quit', () => globalShortcut.unregisterAll())
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
+  tray?.destroy()
+  tray = null
+})
