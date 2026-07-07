@@ -52,7 +52,7 @@ export const useTcStore = create<TcStore>((set, get) => ({
   },
 
   refreshProjects: async () => {
-    set({ projects: await window.tc.launcher.list() })
+    try { set({ projects: await window.tc.launcher.list() }) } catch { set({ projects: [] }) }
   },
 
   pushEvent: (evt: TcEvent) => {

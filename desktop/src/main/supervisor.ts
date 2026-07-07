@@ -77,9 +77,15 @@ export class Supervisor extends EventEmitter {
       const pid = child.pid
       child.kill = (): boolean => {
         try {
-          spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+          const tk = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
             stdio: 'ignore',
             windowsHide: true,
+          })
+          // A spawn failure (e.g. taskkill missing) surfaces asynchronously as an
+          // 'error' event. Without a listener Node re-throws it as an uncaught
+          // exception and crashes the Electron main process; swallow it here.
+          tk.on('error', () => {
+            // taskkill unavailable/failed; nothing more we can do.
           })
         } catch {
           // taskkill unavailable; nothing more we can do.
@@ -128,7 +134,11 @@ export class Supervisor extends EventEmitter {
         resolve()
       }
       child.once('exit', done)
-      child.kill()                                     // SIGTERM / tree-kill → graceful shutdown
+      // On non-Windows this is the native child.kill() → SIGTERM, letting the
+      // child run its graceful-shutdown handler. On Windows child.kill() is
+      // overridden with a `taskkill /T /F` force tree-kill, so the child is
+      // terminated outright and does NOT run any signal handler.
+      child.kill()
       hardKill = setTimeout(() => { child.kill('SIGKILL') }, 5000)
       hardKill.unref?.()
     })
