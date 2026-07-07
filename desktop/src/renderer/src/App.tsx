@@ -8,6 +8,8 @@ import Dashboard from './views/Dashboard'
 import Accounts from './views/Accounts'
 import Routing from './views/Routing'
 import Activity from './views/Activity'
+import Launcher from './views/Launcher'
+import Settings from './views/Settings'
 
 const STATE_BADGE: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   running: { label: 'running', variant: 'default' },
@@ -52,8 +54,8 @@ export default function App(): React.JSX.Element {
           <TabsContent value="accounts"><Accounts /></TabsContent>
           <TabsContent value="routing"><Routing /></TabsContent>
           <TabsContent value="activity"><Activity /></TabsContent>
-          <TabsContent value="launcher"><p className="text-sm text-muted-foreground">Coming in a later task</p></TabsContent>
-          <TabsContent value="settings"><p className="text-sm text-muted-foreground">Coming in a later task</p></TabsContent>
+          <TabsContent value="launcher"><Launcher /></TabsContent>
+          <TabsContent value="settings"><Settings /></TabsContent>
         </div>
       </Tabs>
     </div>
