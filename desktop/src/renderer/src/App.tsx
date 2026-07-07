@@ -6,6 +6,8 @@ import { Pin, PinOff, X } from 'lucide-react'
 import { useTcStore } from './store'
 import Dashboard from './views/Dashboard'
 import Accounts from './views/Accounts'
+import Routing from './views/Routing'
+import Activity from './views/Activity'
 
 const STATE_BADGE: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   running: { label: 'running', variant: 'default' },
@@ -48,8 +50,8 @@ export default function App(): React.JSX.Element {
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <TabsContent value="dashboard"><Dashboard /></TabsContent>
           <TabsContent value="accounts"><Accounts /></TabsContent>
-          <TabsContent value="routing"><p className="text-sm text-muted-foreground">Coming in a later task</p></TabsContent>
-          <TabsContent value="activity"><p className="text-sm text-muted-foreground">Coming in a later task</p></TabsContent>
+          <TabsContent value="routing"><Routing /></TabsContent>
+          <TabsContent value="activity"><Activity /></TabsContent>
           <TabsContent value="launcher"><p className="text-sm text-muted-foreground">Coming in a later task</p></TabsContent>
           <TabsContent value="settings"><p className="text-sm text-muted-foreground">Coming in a later task</p></TabsContent>
         </div>
