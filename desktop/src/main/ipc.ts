@@ -7,6 +7,7 @@ import Store from 'electron-store'
 import type { Supervisor } from './supervisor'
 import { ProxyClient, type TcEvent } from './proxy-client'
 import { readTeamclaudeConfig, updateTeamclaudeConfig, redactConfig, type TcRoute } from './teamclaude-config'
+import { isTeamclaudeInstalled, installTeamclaude } from './teamclaude-install'
 
 export interface Project { path: string; name: string; autorun: string | null }
 export interface AppSettings {
@@ -112,6 +113,14 @@ export function registerIpc(deps: IpcDeps): () => void {
   ipcMain.handle('tc:proxy:start', () => supervisor.start())
   ipcMain.handle('tc:proxy:stop', () => supervisor.stop())
   ipcMain.handle('tc:proxy:restart', () => supervisor.restart())
+
+  // Onboarding: ensure a real global `teamclaude` install, streaming npm output.
+  ipcMain.handle('tc:install:status', () => isTeamclaudeInstalled())
+  ipcMain.handle('tc:install:run', async () => {
+    const r = await installTeamclaude(line => broadcast('tc:install-log', line))
+    if (r.ok) broadcast('tc:install-log', '✓ teamclaude installed')
+    return r
+  })
 
   ipcMain.handle('tc:api:status', () => client.status())
   ipcMain.handle('tc:api:recentEvents', () => client.recentEvents())

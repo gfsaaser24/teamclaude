@@ -7,6 +7,7 @@ import { Supervisor } from './supervisor'
 import { ProxyClient } from './proxy-client'
 import { getTeamclaudeConfigPath, readTeamclaudeConfig } from './teamclaude-config'
 import { registerIpc, applyAutoRoute, DEFAULT_SETTINGS, type AppSettings, type Project } from './ipc'
+import { isTeamclaudeInstalled, preferredProxyLaunch } from './teamclaude-install'
 import { createFlyout, toggleFlyout, getFlyout, setPinned, setCompact } from './flyout'
 import { toggleDock, setDockExpanded, setDockOpacity, isDockOpen, destroyDock } from './dock'
 import { createTray } from './tray'
@@ -43,17 +44,29 @@ async function bootstrap(): Promise<void> {
   const cfg = await readTeamclaudeConfig()
   const port = cfg?.proxy.port ?? 3456
   const apiKey = cfg?.proxy.apiKey ?? ''
-  const proxyEntry = resolveProxyEntry()
   const proxyInfo = { port, url: `http://127.0.0.1:${port}`, configPath: getTeamclaudeConfigPath() }
 
+  // Prefer running the user's REAL global `teamclaude` (installed via npm) so the
+  // app stays identical to the CLI; fall back to the bundled proxy entry only
+  // when no global install is available.
+  const installed = await isTeamclaudeInstalled()
+  const bundledEntry = resolveProxyEntry()
+  const launch = preferredProxyLaunch({
+    installed,
+    isPackaged: app.isPackaged,
+    bundledEntry,
+    packagedNode: process.execPath,
+  })
+
   const supervisor = new Supervisor({
-    command: app.isPackaged ? process.execPath : 'node',
-    args: [proxyEntry, 'server', '--headless'],
+    command: launch.command,
+    args: launch.args,
     port,
     apiKey,
     // NO TEAMCLAUDE_CONFIG override → the child reads the default shared config
-    // with ALL the user's settings. Only ELECTRON_RUN_AS_NODE (packaged) is set.
-    env: app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : undefined,
+    // with ALL the user's settings. When falling back to the bundled entry in a
+    // packaged app, launch.env carries ELECTRON_RUN_AS_NODE.
+    env: launch.env,
     requireCompatible: true,
   })
   const client = new ProxyClient({ port, apiKey })

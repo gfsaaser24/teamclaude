@@ -26,6 +26,11 @@ const tc = {
     oauthLogin: () => ipcRenderer.invoke('tc:api:oauthLogin'),
     onEvent: on('tc:event'),
   },
+  install: {
+    status: () => ipcRenderer.invoke('tc:install:status'),
+    run: () => ipcRenderer.invoke('tc:install:run'),
+    onLog: on('tc:install-log'),
+  },
   config: {
     get: () => ipcRenderer.invoke('tc:config:get'),
     setAccountDisabled: (name: string, disabled: boolean) => ipcRenderer.invoke('tc:config:setAccountDisabled', name, disabled),
