@@ -103,12 +103,29 @@ export class Supervisor extends EventEmitter {
     }
     child.stdout?.on('data', capture)
     child.stderr?.on('data', capture)
-    child.on('exit', () => {
+    // One child death must produce exactly one crash transition. An 'error'
+    // (e.g. ENOENT for a missing binary on shell:false) can fire on its own or
+    // alongside 'exit'; this guard collapses both into a single handling.
+    let handled = false
+    const onDeath = (): void => {
+      if (handled || this.child !== child) return
+      handled = true
       this.child = null
       if (this.stopping) { this.setState('stopped'); return }
       this.setState('crashed')
       this.restartTimer = setTimeout(() => this.spawnChild(), this.backoffMs)
       this.backoffMs = Math.min(this.backoffMs * 2, 30_000)
+    }
+    child.on('exit', onDeath)
+    // Without an 'error' listener, a spawn failure (missing `teamclaude` binary
+    // on mac/Linux) is rethrown by Node as an uncaught exception → main crash.
+    // Surface it in the log and route it through the same crash/backoff path.
+    child.on('error', (err: Error) => {
+      const line = `teamclaude failed to start: ${err.message}`
+      this.lastLogLines.push(line)
+      if (this.lastLogLines.length > 100) this.lastLogLines.shift()
+      this.emit('log', line)
+      onDeath()
     })
     // Poll until the status endpoint answers, then we're running.
     const poll = setInterval(async () => {

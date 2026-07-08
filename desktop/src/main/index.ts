@@ -58,7 +58,9 @@ async function bootstrap(): Promise<void> {
   app.on('window-all-closed', () => { /* keep running in tray */ })
 }
 
-app.whenReady().then(bootstrap)
+app.whenReady().then(bootstrap).catch(err => {
+  console.error('[teamclaude-desktop] bootstrap failed:', err)
+})
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   tray?.destroy()

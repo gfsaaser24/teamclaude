@@ -44,8 +44,27 @@ export class ProxyClient {
       .then(d => d?.events ?? [])
       .catch(() => [])
   }
-  reload(): Promise<{ ok: boolean; added?: number }> { return this.json('/teamclaude/reload', { method: 'POST' }) }
-  oauthLogin(): Promise<{ ok: boolean; error?: string }> { return this.json('/teamclaude/oauth/login', { method: 'POST' }) }
+  // Unlike json(), this never rejects: a proxy that's down, slow, or answers a
+  // non-2xx/non-JSON body would otherwise surface as an unhandled IPC-handler
+  // error (and, for oauth's 409 "already in flight", leave the UI spinner
+  // stuck). Always resolve to an object carrying an `ok` boolean.
+  private async postControl(path: string): Promise<{ ok: boolean; error?: string; added?: number }> {
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.port}${path}`, {
+        method: 'POST',
+        headers: { 'x-api-key': this.apiKey },
+        signal: AbortSignal.timeout(10_000),
+      })
+      const text = await res.text()
+      // The proxy returns {ok:true,...} on success and {ok:false,error} on 409;
+      // parse when we can, otherwise synthesize from the HTTP status.
+      try { return JSON.parse(text) } catch { return { ok: res.ok, error: res.ok ? undefined : `${res.status} ${res.statusText}` } }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  }
+  reload(): Promise<{ ok: boolean; error?: string; added?: number }> { return this.postControl('/teamclaude/reload') }
+  oauthLogin(): Promise<{ ok: boolean; error?: string }> { return this.postControl('/teamclaude/oauth/login') }
 
   /**
    * Subscribe to /teamclaude/events. The hello frame's `recent` array is

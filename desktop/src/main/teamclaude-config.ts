@@ -41,11 +41,21 @@ export function getTeamclaudeConfigPath(env: NodeJS.ProcessEnv = process.env): s
 }
 
 export async function readTeamclaudeConfig(): Promise<TcConfig | null> {
+  let raw: string
   try {
-    return JSON.parse(await readFile(getTeamclaudeConfigPath(), 'utf8'))
+    raw = await readFile(getTeamclaudeConfigPath(), 'utf8')
   } catch (err) {
+    // Missing file is the normal "not set up yet" state: null, silently.
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
+  }
+  try {
+    return JSON.parse(raw) as TcConfig
+  } catch (err) {
+    // A corrupt config (proxy killed mid-write, bad hand-edit) must not stop the
+    // app from booting — treat it as "no usable config" but log so it's visible.
+    console.error(`[teamclaude-config] ignoring unparseable config: ${(err as Error).message}`)
+    return null
   }
 }
 
