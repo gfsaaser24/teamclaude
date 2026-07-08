@@ -59,69 +59,68 @@ export default function RadialMeter({
       style={{ width: size }}
       title={title}
     >
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        role="img"
-        aria-label={aria}
-        shapeRendering="geometricPrecision"
-        style={{ display: 'block' }}
-      >
-        {/* Track ring — faint at rest, fainter still when there's no data. */}
-        <circle
-          cx={c}
-          cy={c}
-          r={r}
-          fill="none"
-          stroke="var(--muted-foreground)"
-          strokeOpacity={has ? 0.18 : 0.1}
-          strokeWidth={stroke}
-        />
-        {/* Foreground arc — starts at 12 o'clock, sweeps clockwise by `ratio`. */}
-        {has && (
+      {/* SVG rings + an HTML overlay for the read-out. The number is centred with
+          flexbox (not SVG text baselines, which drift a pixel or two at small
+          sizes) so it's dead-centre in the ring at any size. */}
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+          role="img"
+          aria-label={aria}
+          shapeRendering="geometricPrecision"
+          style={{ display: 'block' }}
+        >
+          {/* Track ring — faint at rest, fainter still when there's no data. */}
           <circle
             cx={c}
             cy={c}
             r={r}
             fill="none"
-            stroke={color}
+            stroke="var(--muted-foreground)"
+            strokeOpacity={has ? 0.18 : 0.1}
             strokeWidth={stroke}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            transform={`rotate(-90 ${c} ${c})`}
-            style={{
-              transition:
-                'stroke-dashoffset 620ms cubic-bezier(0.22,1,0.36,1), stroke 320ms ease',
-              filter: `drop-shadow(0 0 ${stroke * 0.5}px ${color})`,
-            }}
           />
-        )}
-        {/* Centred read-out: big number, small percent sign. */}
-        <text
-          x={c}
-          y={c}
-          textAnchor="middle"
-          dominantBaseline="central"
+          {/* Foreground arc — starts at 12 o'clock, sweeps clockwise by `ratio`. */}
+          {has && (
+            <circle
+              cx={c}
+              cy={c}
+              r={r}
+              fill="none"
+              stroke={color}
+              strokeWidth={stroke}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              transform={`rotate(-90 ${c} ${c})`}
+              style={{
+                transition:
+                  'stroke-dashoffset 620ms cubic-bezier(0.22,1,0.36,1), stroke 320ms ease',
+                filter: `drop-shadow(0 0 ${stroke * 0.5}px ${color})`,
+              }}
+            />
+          )}
+        </svg>
+        <div
+          className="pointer-events-none absolute inset-0 flex items-center justify-center leading-none"
           style={{ fontVariantNumeric: 'tabular-nums' }}
         >
           {has ? (
-            <>
-              <tspan fontSize={numberFont} fontWeight={600} fill="var(--foreground)">
-                {pct}
-              </tspan>
-              <tspan fontSize={pctFont} fontWeight={600} fill="var(--muted-foreground)" dx={1}>
+            <span className="font-semibold text-foreground" style={{ fontSize: numberFont, lineHeight: 1 }}>
+              {pct}
+              <span className="font-semibold text-muted-foreground" style={{ fontSize: pctFont }}>
                 %
-              </tspan>
-            </>
+              </span>
+            </span>
           ) : (
-            <tspan fontSize={numberFont} fontWeight={600} fill="var(--muted-foreground)">
+            <span className="font-semibold text-muted-foreground" style={{ fontSize: numberFont, lineHeight: 1 }}>
               {face}
-            </tspan>
+            </span>
           )}
-        </text>
-      </svg>
+        </div>
+      </div>
       {label && (
         <span
           className="mt-1 w-full truncate text-center leading-tight tracking-tight text-muted-foreground"
