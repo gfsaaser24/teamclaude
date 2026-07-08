@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@renderer/components/ui/tabs'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
-import { Pin, PinOff, X } from 'lucide-react'
+import { Pin, PinOff, X, ChevronUp, ChevronDown, Minimize2, Maximize2 } from 'lucide-react'
 import { useTcStore } from './store'
 import Dashboard from './views/Dashboard'
 import Accounts from './views/Accounts'
@@ -22,35 +22,65 @@ const STATE_BADGE: Record<string, { label: string; variant: 'default' | 'seconda
 export default function App(): React.JSX.Element {
   const { proxyState, init } = useTcStore()
   const [pinned, setPinnedState] = useState(false)
+  const [tabsCollapsed, setTabsCollapsed] = useState(false)
+  const [compact, setCompactState] = useState(false)
+  const [tab, setTab] = useState('dashboard')
   useEffect(() => { void init() }, [init])
+
+  // Compact/HUD mode: shrink the OS window to a small HUD and strip the chrome
+  // down to the active-account block. Forces the Home tab so the meters show,
+  // collapses the tab strip, and drives the window resize in the main process.
+  const toggleCompact = (): void => {
+    const next = !compact
+    setCompactState(next)
+    setTabsCollapsed(next)
+    if (next) setTab('dashboard')
+    void window.tc.window.setCompact(next)
+  }
 
   const badge = STATE_BADGE[proxyState] ?? STATE_BADGE.stopped
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background/95 text-foreground">
-      <header className="app-drag flex shrink-0 items-center gap-2 border-b px-4 py-3">
-        <span className="text-sm font-semibold tracking-tight">TeamClaude</span>
-        <Badge variant={badge.variant}>{badge.label}</Badge>
-        <div className="app-no-drag ml-auto flex items-center gap-1">
-          <Button variant="ghost" size="icon" aria-label="Pin panel"
+      <header className="app-drag flex shrink-0 items-center gap-1.5 border-b px-3 py-2.5">
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">TeamClaude</span>
+        <Badge variant={badge.variant} className="shrink-0">{badge.label}</Badge>
+        <div className="app-no-drag flex shrink-0 items-center gap-0.5">
+          <Button variant="ghost" size="icon-sm"
+            aria-label={tabsCollapsed ? 'Show tabs' : 'Hide tabs'}
+            title={tabsCollapsed ? 'Show tabs' : 'Hide tabs'}
+            onClick={() => setTabsCollapsed(v => !v)}>
+            {tabsCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+          </Button>
+          <Button variant="ghost" size="icon-sm"
+            aria-label={compact ? 'Exit compact mode' : 'Compact HUD mode'}
+            title={compact ? 'Exit compact mode' : 'Compact HUD mode'}
+            onClick={toggleCompact}>
+            {compact ? <Maximize2 className="size-4" /> : <Minimize2 className="size-4" />}
+          </Button>
+          <Button variant="ghost" size="icon-sm" aria-label="Pin panel"
             onClick={() => { const next = !pinned; setPinnedState(next); void window.tc.window.setPinned(next) }}>
             {pinned ? <Pin className="size-4" /> : <PinOff className="size-4 opacity-50" />}
           </Button>
-          <Button variant="ghost" size="icon" aria-label="Hide panel" onClick={() => void window.tc.window.hide()}>
+          <Button variant="ghost" size="icon-sm" aria-label="Hide panel" onClick={() => void window.tc.window.hide()}>
             <X className="size-4" />
           </Button>
         </div>
       </header>
-      <Tabs defaultValue="dashboard" className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mx-4 mt-3">
-          <TabsTrigger value="dashboard">Home</TabsTrigger>
-          <TabsTrigger value="accounts">Accounts</TabsTrigger>
-          <TabsTrigger value="routing">Routes</TabsTrigger>
-          <TabsTrigger value="activity">Activity</TabsTrigger>
-          <TabsTrigger value="launcher">Projects</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          <TabsContent value="dashboard"><Dashboard /></TabsContent>
+      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+        {!tabsCollapsed && (
+          <div className="px-3 pt-3">
+            <TabsList className="h-auto w-full flex-wrap">
+              <TabsTrigger value="dashboard">Home</TabsTrigger>
+              <TabsTrigger value="accounts">Accounts</TabsTrigger>
+              <TabsTrigger value="routing">Routes</TabsTrigger>
+              <TabsTrigger value="activity">Activity</TabsTrigger>
+              <TabsTrigger value="launcher">Projects</TabsTrigger>
+              <TabsTrigger value="settings">Settings</TabsTrigger>
+            </TabsList>
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <TabsContent value="dashboard"><Dashboard compact={compact} /></TabsContent>
           <TabsContent value="accounts"><Accounts /></TabsContent>
           <TabsContent value="routing"><Routing /></TabsContent>
           <TabsContent value="activity"><Activity /></TabsContent>

@@ -46,6 +46,7 @@ const tc = {
   },
   window: {
     setPinned: (pinned: boolean) => ipcRenderer.invoke('tc:window:setPinned', pinned),
+    setCompact: (on: boolean) => ipcRenderer.invoke('tc:window:setCompact', on),
     hide: () => ipcRenderer.invoke('tc:window:hide'),
   },
 }

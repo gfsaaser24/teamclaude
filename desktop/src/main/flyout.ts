@@ -4,13 +4,49 @@ import { is } from '@electron-toolkit/utils'
 
 const WIDTH = 420
 const MARGIN = 12
+const COMPACT_WIDTH = 300
+const COMPACT_HEIGHT = 360
 
 let flyout: BrowserWindow | null = null
 let pinned = false
 let userMoved = false   // once the user drags/resizes, stop snapping back to the edge
+let compact = false
+let prevBounds: { x: number; y: number; width: number; height: number } | null = null
 
 export function getFlyout(): BrowserWindow | null { return flyout }
 export function setPinned(v: boolean): void { pinned = v }
+
+/**
+ * Shrink the flyout into a small always-on-top HUD (active account + meters) and
+ * back. We only ever change SIZE — the window keeps its current on-screen corner
+ * so we never fight a position the user chose. The pre-compact size is stashed so
+ * a manual resize survives the round trip. Anchored to the window's right edge so
+ * a right-docked flyout hugs the same corner while it grows/shrinks.
+ */
+export function setCompact(on: boolean): void {
+  if (!flyout) return
+  const cur = flyout.getBounds()
+  const { workArea } = screen.getPrimaryDisplay()
+  const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(v, hi))
+
+  if (on) {
+    if (!compact) prevBounds = cur   // remember the size to restore to
+    compact = true
+    const width = COMPACT_WIDTH
+    const height = COMPACT_HEIGHT
+    const x = clamp(cur.x + cur.width - width, workArea.x, workArea.x + workArea.width - width)
+    const y = clamp(cur.y, workArea.y, workArea.y + workArea.height - height)
+    flyout.setBounds({ x, y, width, height })
+  } else {
+    compact = false
+    const width = prevBounds?.width ?? WIDTH
+    const height = prevBounds?.height ?? (workArea.height - MARGIN * 2)
+    prevBounds = null
+    const x = clamp(cur.x + cur.width - width, workArea.x, workArea.x + workArea.width - width)
+    const y = clamp(cur.y, workArea.y, workArea.y + workArea.height - height)
+    flyout.setBounds({ x, y, width, height })
+  }
+}
 
 export function createFlyout(): BrowserWindow {
   const { workArea } = screen.getPrimaryDisplay()
@@ -22,7 +58,7 @@ export function createFlyout(): BrowserWindow {
     show: false,
     frame: false,
     resizable: true,
-    minWidth: 360,
+    minWidth: 240,
     movable: true,
     skipTaskbar: true,
     alwaysOnTop: true,

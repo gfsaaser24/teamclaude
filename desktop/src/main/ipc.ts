@@ -52,6 +52,7 @@ export interface IpcDeps {
   store: Store<{ settings: AppSettings; projects: Project[] }>
   getFlyout: () => BrowserWindow | null
   setPinned: (pinned: boolean) => void
+  setCompact: (on: boolean) => void         // shrink the flyout into the HUD and back
   applySettings: (s: AppSettings) => void   // re-register hotkey, login item (Task 5)
   proxyInfo: ProxyInfo                        // the app-owned proxy's port/url/configPath
 }
@@ -236,6 +237,7 @@ export function registerIpc(deps: IpcDeps): () => void {
   })
 
   ipcMain.handle('tc:window:setPinned', (_e, pinned: boolean) => deps.setPinned(pinned))
+  ipcMain.handle('tc:window:setCompact', (_e, on: boolean) => deps.setCompact(on))
   ipcMain.handle('tc:window:hide', () => deps.getFlyout()?.hide())
 
   return () => disconnectEvents()
