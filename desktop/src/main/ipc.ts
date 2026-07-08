@@ -197,6 +197,17 @@ export function registerIpc(deps: IpcDeps): () => void {
 
   ipcMain.handle('tc:proxy:getInfo', () => deps.proxyInfo)
 
+  ipcMain.handle('tc:proxy:getAutoRoute', () => {
+    const s = { ...DEFAULT_SETTINGS, ...store.get('settings', DEFAULT_SETTINGS) }
+    return { enabled: !!s.autoRoute, url: deps.proxyInfo.url }
+  })
+  ipcMain.handle('tc:proxy:setAutoRoute', async (_e, enabled: boolean) => {
+    await applyAutoRoute(enabled, deps.proxyInfo.url)
+    const s = { ...DEFAULT_SETTINGS, ...store.get('settings', DEFAULT_SETTINGS), autoRoute: enabled }
+    store.set('settings', s)
+    return { ok: true, enabled }
+  })
+
   ipcMain.handle('tc:window:setPinned', (_e, pinned: boolean) => deps.setPinned(pinned))
   ipcMain.handle('tc:window:hide', () => deps.getFlyout()?.hide())
 

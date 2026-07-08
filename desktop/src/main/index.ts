@@ -7,7 +7,7 @@ import { Supervisor } from './supervisor'
 import { ProxyClient } from './proxy-client'
 import { getTeamclaudeConfigPath } from './teamclaude-config'
 import { ensureAppProxyConfig } from './app-proxy-config'
-import { registerIpc, DEFAULT_SETTINGS, type AppSettings, type Project } from './ipc'
+import { registerIpc, applyAutoRoute, DEFAULT_SETTINGS, type AppSettings, type Project } from './ipc'
 import { createFlyout, toggleFlyout, getFlyout, setPinned } from './flyout'
 import { createTray } from './tray'
 
@@ -68,6 +68,11 @@ async function bootstrap(): Promise<void> {
   applySettings(settings)
 
   registerIpc({ supervisor, client, store, getFlyout, setPinned, applySettings, proxyInfo })
+
+  // If the user turned on auto-route, re-assert it on launch (the port is
+  // stable, but this keeps the env var correct if it ever changed).
+  if (settings.autoRoute) void applyAutoRoute(true, proxyInfo.url)
+
   createFlyout()
   tray = createTray({ supervisor, onToggle: toggleFlyout, onQuit: () => app.quit() })
 

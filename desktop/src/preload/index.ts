@@ -15,6 +15,8 @@ const tc = {
     stop: () => ipcRenderer.invoke('tc:proxy:stop'),
     restart: () => ipcRenderer.invoke('tc:proxy:restart'),
     getInfo: () => ipcRenderer.invoke('tc:proxy:getInfo'),
+    getAutoRoute: () => ipcRenderer.invoke('tc:proxy:getAutoRoute'),
+    setAutoRoute: (enabled: boolean) => ipcRenderer.invoke('tc:proxy:setAutoRoute', enabled),
     onState: on('tc:proxy-state'),
   },
   api: {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
+import { Switch } from '@renderer/components/ui/switch'
 import { RotateCw, Play, Square, Copy, Check } from 'lucide-react'
 import { useTcStore } from '../store'
 import QuotaBar from '../components/QuotaBar'
@@ -11,6 +12,9 @@ interface ProxyInfo { port: number; url: string; configPath: string }
 function ConnectCard({ info }: { info: ProxyInfo }): React.JSX.Element {
   const [copied, setCopied] = useState('')
   const cmd = `set "ANTHROPIC_BASE_URL=${info.url}" && claude`
+  const [auto, setAuto] = useState(false)
+  useEffect(() => { void window.tc.proxy.getAutoRoute?.().then((r: { enabled: boolean }) => setAuto(r.enabled)).catch(() => {}) }, [])
+  const toggleAuto = async (v: boolean): Promise<void> => { setAuto(v); await window.tc.proxy.setAutoRoute(v) }
   const copy = (text: string, key: string): void => {
     void navigator.clipboard?.writeText(text)
     setCopied(key)
@@ -30,8 +34,15 @@ function ConnectCard({ info }: { info: ProxyInfo }): React.JSX.Element {
       <CardContent className="space-y-2">
         <p className="text-[11px] text-muted-foreground">This app runs its own proxy at:</p>
         <Row text={info.url} k="url" />
-        <p className="pt-1 text-[11px] text-muted-foreground">Route a Claude session through it — paste into a terminal:</p>
-        <Row text={cmd} k="cmd" />
+        <label className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-2">
+          <span className="min-w-0 text-xs">
+            <span className="font-medium">Route my Claude through this</span>
+            <span className="block text-[11px] text-muted-foreground">Sets ANTHROPIC_BASE_URL for new terminals — then just run <span className="font-mono">claude</span>.</span>
+          </span>
+          <Switch checked={auto} onCheckedChange={v => void toggleAuto(v)} />
+        </label>
+        <p className="text-[11px] text-muted-foreground">{auto ? 'On — open a NEW terminal and run claude; it routes here automatically.' : 'Or route one session manually:'}</p>
+        {!auto && <Row text={cmd} k="cmd" />}
         <p className="text-[11px] text-muted-foreground">Then requests show up in Activity and the quota bars move.</p>
       </CardContent>
     </Card>
