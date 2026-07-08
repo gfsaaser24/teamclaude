@@ -11,10 +11,12 @@ import { registerIpc, DEFAULT_SETTINGS, type AppSettings, type Project } from '.
 import { createFlyout, toggleFlyout, getFlyout, setPinned } from './flyout'
 import { createTray } from './tray'
 
-/** Locate this branch's proxy entry (src/index.js) for the app to run. */
+/** Locate the teamclaude proxy entry the app runs — bundled in the packaged
+ *  app, or the repo checkout in dev. */
 function resolveProxyEntry(): string {
   const candidates = [
-    join(app.getAppPath(), '..', 'src', 'index.js'),   // packaged/dev: repo/desktop -> repo/src
+    join(process.resourcesPath, 'app-proxy', 'index.js'),   // packaged: extraResources
+    join(app.getAppPath(), '..', 'src', 'index.js'),
     join(process.cwd(), 'src', 'index.js'),
     join(process.cwd(), '..', 'src', 'index.js'),
     'C:/code/teamclaude/src/index.js',
@@ -43,12 +45,17 @@ async function bootstrap(): Promise<void> {
   const proxyEntry = resolveProxyEntry()
   const proxyInfo = { port: prov.port, url: `http://127.0.0.1:${prov.port}`, configPath: appConfigPath }
 
+  // In the packaged app there's no external `node`; run the proxy with
+  // Electron's own Node (ELECTRON_RUN_AS_NODE). In dev, plain `node`.
   const supervisor = new Supervisor({
-    command: 'node',
+    command: app.isPackaged ? process.execPath : 'node',
     args: [proxyEntry, 'server', '--headless'],
     port: prov.port,
     apiKey: prov.apiKey,
-    env: { TEAMCLAUDE_CONFIG: appConfigPath },
+    env: {
+      TEAMCLAUDE_CONFIG: appConfigPath,
+      ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    },
     requireCompatible: true,
   })
   const client = new ProxyClient({ port: prov.port, apiKey: prov.apiKey })

@@ -1,5 +1,5 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync, execFile } from 'node:child_process'
 import { writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -15,6 +15,7 @@ export interface AppSettings {
   launchAtLogin: boolean
   teamclaudeCommand: string
   teamclaudeArgs: string[]
+  autoRoute?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -23,6 +24,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   teamclaudeCommand: 'teamclaude',
   teamclaudeArgs: ['server', '--headless'],
+  autoRoute: false,
+}
+
+function runCmd(cmd: string, args: string[]): Promise<void> {
+  return new Promise(resolve => { execFile(cmd, args, { windowsHide: true }, () => resolve()) })
+}
+
+/**
+ * Persist ANTHROPIC_BASE_URL as a user env var so every NEW terminal's `claude`
+ * routes through this proxy automatically — no per-session command. Enabling
+ * uses `setx`; disabling removes the var from the user environment. Applies to
+ * new processes only (not already-open terminals).
+ */
+export async function applyAutoRoute(enabled: boolean, url: string): Promise<void> {
+  if (enabled) await runCmd('setx', ['ANTHROPIC_BASE_URL', url])
+  else await runCmd('reg', ['delete', 'HKCU\\Environment', '/v', 'ANTHROPIC_BASE_URL', '/f'])
 }
 
 export interface ProxyInfo { port: number; url: string; configPath: string }
