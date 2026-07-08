@@ -20,6 +20,7 @@ export interface AppSettings {
   claudeFlags?: string[]   // Claude Code CLI flags appended to the auto-terminal's `claude` command
   showDock?: boolean       // opt-in edge dock (micro-HUD) — persisted, off by default
   dockOpacity?: number     // edge dock window opacity [0.25, 1]
+  onboarded?: boolean      // first-run walkthrough completed/skipped — omitted (falsy) until then
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

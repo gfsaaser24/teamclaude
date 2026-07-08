@@ -195,6 +195,16 @@ export default function Settings(): React.JSX.Element {
                              [&::-webkit-slider-thumb]:hover:scale-110"
                 />
               </div>
+              <div className="flex items-center justify-between gap-2 border-t border-border/50 pt-3">
+                <Label className="min-w-0 text-xs">
+                  Onboarding
+                  <span className="block text-[11px] font-normal text-muted-foreground">Replay the first-run walkthrough.</span>
+                </Label>
+                <Button size="sm" variant="outline" className="shrink-0"
+                  onClick={() => { void window.tc.settings.set({ onboarded: false }).then(() => window.location.reload()) }}>
+                  Replay
+                </Button>
+              </div>
             </CardContent>
           </Card>
           <Card>

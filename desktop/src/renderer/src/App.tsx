@@ -4,6 +4,8 @@ import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
 import { Pin, PinOff, X, ChevronUp, ChevronDown, Minimize2, Maximize2 } from 'lucide-react'
 import { useTcStore } from './store'
+import Logo from './components/Logo'
+import Onboarding from './onboarding/Onboarding'
 import Dashboard from './views/Dashboard'
 import Accounts from './views/Accounts'
 import Routing from './views/Routing'
@@ -25,7 +27,15 @@ export default function App(): React.JSX.Element {
   const [tabsCollapsed, setTabsCollapsed] = useState(false)
   const [compact, setCompactState] = useState(false)
   const [tab, setTab] = useState('dashboard')
+  // null = not yet resolved (avoids a flash of the tabs before we know); true =
+  // first run, show the walkthrough instead of the app.
+  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null)
   useEffect(() => { void init() }, [init])
+  useEffect(() => {
+    void window.tc.settings.get()
+      .then((s: { onboarded?: boolean }) => setShowOnboarding(!s?.onboarded))
+      .catch(() => setShowOnboarding(false))
+  }, [])
 
   // Compact/HUD mode: shrink the OS window to a small HUD and strip the chrome
   // down to the active-account block. Forces the Home tab so the meters show,
@@ -42,6 +52,7 @@ export default function App(): React.JSX.Element {
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background/95 text-foreground">
       <header className="app-drag flex shrink-0 items-center gap-1.5 border-b px-3 py-2.5">
+        <Logo size={18} />
         <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">TeamClaude</span>
         <Badge variant={badge.variant} className="shrink-0">{badge.label}</Badge>
         <div className="app-no-drag flex shrink-0 items-center gap-0.5">
@@ -66,6 +77,11 @@ export default function App(): React.JSX.Element {
           </Button>
         </div>
       </header>
+      {showOnboarding === null ? (
+        <div className="min-h-0 flex-1" />
+      ) : showOnboarding ? (
+        <Onboarding onDone={() => setShowOnboarding(false)} />
+      ) : (
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         {!tabsCollapsed && (
           <div className="px-3 pt-3">
@@ -88,6 +104,7 @@ export default function App(): React.JSX.Element {
           <TabsContent value="settings"><Settings /></TabsContent>
         </div>
       </Tabs>
+      )}
     </div>
   )
 }
