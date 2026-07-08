@@ -9,6 +9,7 @@ import { Save, Copy, Check } from 'lucide-react'
 interface AppSettings {
   editorCommand: string; hotkey: string; launchAtLogin: boolean
   teamclaudeCommand: string; teamclaudeArgs: string[]
+  showDock?: boolean
 }
 
 interface ProxyInfo { port: number; url: string; configPath: string }
@@ -92,6 +93,17 @@ export default function Settings(): React.JSX.Element {
               <div className="flex items-center justify-between">
                 <Label className="text-xs">Launch at login</Label>
                 <Switch checked={s.launchAtLogin} onCheckedChange={v => setS({ ...s, launchAtLogin: v })} />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <Label className="min-w-0 text-xs">
+                  Show edge dock (micro-HUD)
+                  <span className="block text-[11px] font-normal text-muted-foreground">Always-on-top gauges pinned to the right screen edge.</span>
+                </Label>
+                <Switch checked={!!s.showDock} onCheckedChange={v => {
+                  setS({ ...s, showDock: v })
+                  void window.tc.settings.set({ showDock: v })
+                  void window.tc.dock.toggle(v)
+                }} />
               </div>
             </CardContent>
           </Card>

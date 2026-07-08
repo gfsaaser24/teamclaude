@@ -1,0 +1,86 @@
+import { BrowserWindow, screen } from 'electron'
+import { join } from 'node:path'
+import { is } from '@electron-toolkit/utils'
+
+// A persistent, semi-transparent micro-HUD pinned to the right screen edge. It
+// is a SEPARATE window from the flyout: always-on-top, never hidden on blur, and
+// only ever two widths — a thin collapsed tab or an expanded gauge panel. It
+// stays anchored to the right edge as it grows/shrinks (x is recomputed from the
+// new width) and vertically centered.
+const COLLAPSED = 26
+const EXPANDED = 188
+
+let dock: BrowserWindow | null = null
+
+export function isDockOpen(): boolean {
+  return dock !== null && !dock.isDestroyed()
+}
+
+/** Right-edge-anchored, vertically-centered bounds for a given width. */
+function boundsFor(width: number): { x: number; y: number; width: number; height: number } {
+  const { workArea } = screen.getPrimaryDisplay()
+  const height = Math.min(Math.round(workArea.height * 0.8), 520)
+  const x = workArea.x + workArea.width - width
+  const y = workArea.y + Math.round((workArea.height - height) / 2)
+  return { x, y, width, height }
+}
+
+export function createDock(): BrowserWindow {
+  if (dock && !dock.isDestroyed()) return dock
+  dock = new BrowserWindow({
+    ...boundsFor(COLLAPSED),
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    // NB: no backgroundMaterial here — acrylic/mica fight true transparency on
+    // Win11. The glass look is done in CSS (translucent bg + backdrop-blur).
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  })
+  // Float above ordinary always-on-top windows (incl. the flyout) so the HUD is
+  // never occluded. It is a status readout, not a focus target.
+  dock.setAlwaysOnTop(true, 'screen-saver')
+  // Persistent HUD: intentionally NO 'blur' handler — it must not self-hide.
+  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+    dock.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?view=dock`)
+  } else {
+    dock.loadFile(join(__dirname, '../renderer/index.html'), { search: 'view=dock' })
+  }
+  dock.once('ready-to-show', () => dock?.show())
+  dock.on('closed', () => {
+    dock = null
+  })
+  return dock
+}
+
+export function destroyDock(): void {
+  if (dock && !dock.isDestroyed()) dock.destroy()
+  dock = null
+}
+
+/** Resize between the collapsed tab and the expanded panel, staying pinned to
+ *  the right edge (x follows the new width). No-op if the dock isn't open. */
+export function setDockExpanded(on: boolean): void {
+  if (!dock || dock.isDestroyed()) return
+  dock.setBounds(boundsFor(on ? EXPANDED : COLLAPSED))
+}
+
+/** Create+show (opt-in) or tear the dock down entirely. */
+export function toggleDock(on: boolean): void {
+  if (on) {
+    const w = createDock()
+    if (!w.isVisible()) w.show()
+  } else {
+    destroyDock()
+  }
+}

@@ -49,6 +49,11 @@ const tc = {
     setCompact: (on: boolean) => ipcRenderer.invoke('tc:window:setCompact', on),
     hide: () => ipcRenderer.invoke('tc:window:hide'),
   },
+  dock: {
+    toggle: (on: boolean) => ipcRenderer.invoke('tc:dock:toggle', on),
+    setExpanded: (on: boolean) => ipcRenderer.invoke('tc:dock:setExpanded', on),
+    isOpen: () => ipcRenderer.invoke('tc:dock:isOpen'),
+  },
 }
 
 contextBridge.exposeInMainWorld('tc', tc)
