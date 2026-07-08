@@ -1,6 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { spawn, execSync, execFile } from 'node:child_process'
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import Store from 'electron-store'
@@ -154,22 +154,45 @@ export function registerIpc(deps: IpcDeps): () => void {
     const settings = { ...DEFAULT_SETTINGS, ...store.get('settings', DEFAULT_SETTINGS) }
     const project = store.get('projects', []).find(p => p.path === path)
     try {
-      // Best-effort auto-terminal: a folderOpen task that runs the project's
-      // autorun command in the editor's integrated terminal. Written only when
-      // the project opted in (autorun set) and no tasks.json exists yet.
+      // Best-effort auto-terminal: a folderOpen task that runs `claude` routed at
+      // this app's own proxy, in the editor's integrated terminal. Written only
+      // when the project opted in (autorun set).
       if (project?.autorun) {
+        const raw = (project?.autorun ?? '').trim()
+        const runCmd = raw && raw !== 'teamclaude run' ? raw : 'claude'
+        // Route this terminal explicitly at the app's own proxy (robust even if the
+        // terminal didn't inherit the persisted ANTHROPIC_BASE_URL).
+        const termCmd = `set "ANTHROPIC_BASE_URL=${deps.proxyInfo.url}" && ${runCmd}`
+        const task = {
+          label: 'TeamClaude: open terminal',
+          type: 'shell',
+          command: termCmd,
+          presentation: { reveal: 'always', focus: true, panel: 'new' },
+          runOptions: { runOn: 'folderOpen' },
+        }
         const vscodeDir = join(path, '.vscode')
         await mkdir(vscodeDir, { recursive: true })
-        await writeFile(join(vscodeDir, 'tasks.json'), JSON.stringify({
-          version: '2.0.0',
-          tasks: [{
-            label: 'TeamClaude: open terminal',
-            type: 'shell',
-            command: project.autorun,
-            presentation: { reveal: 'always', focus: true, panel: 'new' },
-            runOptions: { runOn: 'folderOpen' },
-          }],
-        }, null, 2), { flag: 'wx' }).catch(() => { /* exists — leave the user's file alone */ })
+        const tasksPath = join(vscodeDir, 'tasks.json')
+        // Merge into an existing tasks.json — keep the user's other tasks and
+        // replace (or insert) our labelled one — instead of the old write-exclusive
+        // that left the broken `teamclaude run` command in place. A missing file is
+        // written fresh; an unparseable one is backed up to tasks.json.bak first so
+        // hand-written config is never silently destroyed.
+        let out: { version: string; tasks: unknown[] } = { version: '2.0.0', tasks: [task] }
+        let existing: string | null = null
+        try { existing = await readFile(tasksPath, 'utf8') } catch { /* missing — write fresh */ }
+        if (existing !== null) {
+          try {
+            const parsed = JSON.parse(existing) as { version?: string; tasks?: unknown[] }
+            const others = Array.isArray(parsed.tasks)
+              ? parsed.tasks.filter(t => (t as { label?: string } | null)?.label !== task.label)
+              : []
+            out = { version: parsed.version ?? '2.0.0', tasks: [...others, task] }
+          } catch {
+            await writeFile(`${tasksPath}.bak`, existing).catch(() => { /* best-effort backup */ })
+          }
+        }
+        await writeFile(tasksPath, JSON.stringify(out, null, 2)).catch(() => { /* best-effort */ })
       }
       const exe = resolveEditorExe(settings.editorCommand)
       if (!exe) {

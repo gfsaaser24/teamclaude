@@ -11,9 +11,10 @@ export default function Launcher(): React.JSX.Element {
   const { projects, refreshProjects } = useTcStore()
   const [error, setError] = useState<string | null>(null)
   const [autoTerminal, setAutoTerminal] = useState(true)
-  // teamclaude run launches claude with the proxy env (ANTHROPIC_BASE_URL /
-  // MITM) already handled — see src/index.js runCommand.
-  const [autorunCmd, setAutorunCmd] = useState('teamclaude run')
+  // Runs plain `claude`, routed through this app's own proxy — the open
+  // handler prefixes ANTHROPIC_BASE_URL so the terminal always points at the
+  // live app proxy (see tc:launcher:open in src/main/ipc.ts).
+  const [autorunCmd, setAutorunCmd] = useState('claude')
 
   const addProject = async (): Promise<void> => {
     const path = await window.tc.launcher.pickFolder()
@@ -43,8 +44,8 @@ export default function Launcher(): React.JSX.Element {
             <Plus className="size-4" /> Add project folder
           </Button>
           <p className="text-[11px] text-muted-foreground">
-            Auto-terminal writes a one-time .vscode/tasks.json (folderOpen task) into the project.
-            The editor asks once to allow automatic tasks.
+            Auto-terminal writes a .vscode/tasks.json (folderOpen task) that runs claude through this
+            app&apos;s proxy. The editor asks once to allow automatic tasks.
           </p>
         </CardContent>
       </Card>
