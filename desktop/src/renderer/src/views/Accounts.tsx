@@ -39,24 +39,24 @@ export default function Accounts(): React.JSX.Element {
       {accounts.map(a => (
         <Card key={a.name}>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              {a.name}
-              <Badge variant="secondary">{a.type}</Badge>
-              {a.orgName && <Badge variant="outline">{a.orgName}</Badge>}
+            <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
+              <span className="truncate" title={a.name}>{a.name}</span>
+              <Badge variant="secondary" className="shrink-0">{a.type}</Badge>
+              {a.orgName && <Badge variant="outline" className="min-w-0 shrink-0 max-w-[40%]"><span className="truncate" title={a.orgName}>{a.orgName}</span></Badge>}
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-xs">
+          <CardContent className="flex items-center gap-3">
+            <label className="flex shrink-0 items-center gap-2 text-xs">
               <Switch checked={!a.disabled}
                 onCheckedChange={async v => { await window.tc.config.setAccountDisabled(a.name, !v); await refreshConfig() }} />
               enabled
             </label>
-            <label className="flex items-center gap-2 text-xs">
+            <label className="flex shrink-0 items-center gap-2 text-xs">
               priority
               <Input type="number" defaultValue={a.priority ?? 0} className="h-7 w-16"
                 onBlur={async e => { await window.tc.config.setAccountPriority(a.name, Number(e.target.value) || 0); await refreshConfig() }} />
             </label>
-            <Button variant="ghost" size="icon" className="ml-auto text-destructive" aria-label={`Remove ${a.name}`}
+            <Button variant="ghost" size="icon" className="ml-auto shrink-0 text-destructive" aria-label={`Remove ${a.name}`}
               onClick={async () => {
                 if (!window.confirm(`Remove account "${a.name}"? The proxy will restart.`)) return
                 await window.tc.config.removeAccount(a.name)

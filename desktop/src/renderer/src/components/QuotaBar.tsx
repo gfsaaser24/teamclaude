@@ -8,9 +8,9 @@ export default function QuotaBar({ label, utilization, resetsAt }: {
   const resets = resetsAt ? new Date(resetsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null
   return (
     <div className="space-y-1">
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{label}</span>
-        <span>{pct}%{resets ? ` · resets ${resets}` : ''}</span>
+      <div className="flex min-w-0 justify-between gap-2 text-xs text-muted-foreground">
+        <span className="truncate" title={label}>{label}</span>
+        <span className="shrink-0">{pct}%{resets ? ` · resets ${resets}` : ''}</span>
       </div>
       <Progress value={pct} className={pct >= 98 ? '[&>div]:bg-destructive' : pct >= 80 ? '[&>div]:bg-amber-500' : ''} />
     </div>

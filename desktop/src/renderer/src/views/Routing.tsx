@@ -43,9 +43,9 @@ export default function Routing(): React.JSX.Element {
       {routes.map((r, i) => (
         <Card key={i}>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center text-sm">
-              <Input value={r.name} placeholder="route name" className="h-7 w-40" onChange={e => edit(i, { name: e.target.value })} />
-              <Button variant="ghost" size="icon" className="ml-auto text-destructive" aria-label="Delete route"
+            <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
+              <Input value={r.name} placeholder="route name" className="h-7 min-w-0 flex-1" onChange={e => edit(i, { name: e.target.value })} />
+              <Button variant="ghost" size="icon" className="shrink-0 text-destructive" aria-label="Delete route"
                 onClick={() => { setRoutes(rs => rs.filter((_x, j) => j !== i)); setDirty(true) }}>
                 <Trash2 className="size-4" />
               </Button>

@@ -39,10 +39,10 @@ export default function Activity(): React.JSX.Element {
       <ul className="space-y-1">
         {rows.slice(0, 100).map(r => (
           <li key={r.reqId} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs">
-            {!r.done ? <Badge variant="outline" className="animate-pulse">···</Badge>
-              : <Badge variant={r.status && r.status < 400 ? 'secondary' : 'destructive'}>{r.status ?? '?'}</Badge>}
-            <span className="truncate font-mono">{r.model ?? r.path ?? '—'}</span>
-            <span className="ml-auto shrink-0 text-muted-foreground">{r.account ?? ''}</span>
+            {!r.done ? <Badge variant="outline" className="shrink-0 animate-pulse">···</Badge>
+              : <Badge variant={r.status && r.status < 400 ? 'secondary' : 'destructive'} className="shrink-0">{r.status ?? '?'}</Badge>}
+            <span className="min-w-0 flex-1 truncate font-mono" title={r.model ?? r.path ?? undefined}>{r.model ?? r.path ?? '—'}</span>
+            <span className="ml-auto max-w-[35%] shrink-0 truncate text-muted-foreground" title={r.account ?? undefined}>{r.account ?? ''}</span>
             <span className="shrink-0 text-muted-foreground">{new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           </li>
         ))}

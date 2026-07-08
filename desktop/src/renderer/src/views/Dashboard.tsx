@@ -28,8 +28,8 @@ export default function Dashboard(): React.JSX.Element {
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Active account</CardTitle></CardHeader>
         <CardContent className="space-y-1">
-          <div className="text-lg font-medium">{status.currentAccount ?? '—'}</div>
-          <div className="text-xs text-muted-foreground">
+          <div className="truncate text-lg font-medium" title={status.currentAccount ?? undefined}>{status.currentAccount ?? '—'}</div>
+          <div className="text-xs break-words text-muted-foreground">
             port {status.server?.port} · up {uptime}m · {proxyState} · {recentEnds.length} recent requests
           </div>
           <div className="flex gap-2 pt-2">
@@ -46,11 +46,11 @@ export default function Dashboard(): React.JSX.Element {
       {(status.accounts ?? []).map(a => (
         <Card key={a.name} className={a.name === status.currentAccount ? 'border-primary/50' : ''}>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              {a.name}
-              {a.disabled && <Badge variant="outline">disabled</Badge>}
-              {a.status === 'error' && <Badge variant="destructive">error</Badge>}
-              {a.rateLimitedUntil && <Badge variant="destructive">rate-limited</Badge>}
+            <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
+              <span className="truncate" title={a.name}>{a.name}</span>
+              {a.disabled && <Badge variant="outline" className="shrink-0">disabled</Badge>}
+              {a.status === 'error' && <Badge variant="destructive" className="shrink-0">error</Badge>}
+              {a.rateLimitedUntil && <Badge variant="destructive" className="shrink-0">rate-limited</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">

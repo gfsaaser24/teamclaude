@@ -52,8 +52,8 @@ export default function Settings(): React.JSX.Element {
             <Input value={s.teamclaudeArgs.join(' ')} className="h-7 font-mono"
               onChange={e => setS({ ...s, teamclaudeArgs: e.target.value.split(/\s+/).filter(Boolean) })} />
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            Dev checkout example: command <code>node</code>, args <code>C:\code\teamclaude\src\index.js server --headless</code>.
+          <p className="text-[11px] break-words text-muted-foreground">
+            Dev checkout example: command <code>node</code>, args <code className="break-all">C:\code\teamclaude\src\index.js server --headless</code>.
             Command changes apply on the next proxy restart.
           </p>
         </CardContent>

@@ -31,7 +31,7 @@ export default function Launcher(): React.JSX.Element {
   return (
     <div className="space-y-3">
       <Card>
-        <CardContent className="space-y-2 pt-4">
+        <CardContent className="space-y-2">
           <div className="flex items-center justify-between">
             <Label className="text-xs">Auto-open terminal running:</Label>
             <Switch checked={autoTerminal} onCheckedChange={setAutoTerminal} />
@@ -51,7 +51,7 @@ export default function Launcher(): React.JSX.Element {
       {error && <p className="text-xs text-destructive">{error}</p>}
       {projects.map(p => (
         <Card key={p.path}>
-          <CardContent className="flex items-center gap-2 py-3">
+          <CardContent className="flex items-center gap-2">
             <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{p.name}</div>
