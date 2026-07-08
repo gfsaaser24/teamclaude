@@ -19,12 +19,30 @@ export class ProxyClient {
       headers: { 'x-api-key': this.apiKey, ...(init.headers || {}) },
       signal: AbortSignal.timeout(10_000),
     })
-    return (await res.json()) as T
+    // Don't assume the body is JSON: a wrong/older proxy (or an error page)
+    // can answer 2xx with an empty or non-JSON body. Read text first and fail
+    // with a clear message instead of a raw "Unexpected end of JSON input".
+    const text = await res.text()
+    if (!res.ok) {
+      throw new Error(`Proxy ${path} responded ${res.status} ${res.statusText}`)
+    }
+    if (text.trim() === '') {
+      throw new Error(`Proxy ${path} returned an empty body — is this a teamclaude build with this endpoint?`)
+    }
+    try {
+      return JSON.parse(text) as T
+    } catch {
+      throw new Error(`Proxy ${path} returned a non-JSON body (${text.slice(0, 80)}…)`)
+    }
   }
 
   status(): Promise<Record<string, unknown>> { return this.json('/teamclaude/status') }
   recentEvents(): Promise<TcEvent[]> {
-    return this.json<{ events: TcEvent[] }>('/teamclaude/log').then(d => d.events)
+    // Tolerate an older proxy without /teamclaude/log: return an empty feed
+    // rather than surfacing an error for a non-fatal backfill.
+    return this.json<{ events: TcEvent[] }>('/teamclaude/log')
+      .then(d => d?.events ?? [])
+      .catch(() => [])
   }
   reload(): Promise<{ ok: boolean; added?: number }> { return this.json('/teamclaude/reload', { method: 'POST' }) }
   oauthLogin(): Promise<{ ok: boolean; error?: string }> { return this.json('/teamclaude/oauth/login', { method: 'POST' }) }
