@@ -14,6 +14,7 @@ const tc = {
     start: () => ipcRenderer.invoke('tc:proxy:start'),
     stop: () => ipcRenderer.invoke('tc:proxy:stop'),
     restart: () => ipcRenderer.invoke('tc:proxy:restart'),
+    getInfo: () => ipcRenderer.invoke('tc:proxy:getInfo'),
     onState: on('tc:proxy-state'),
   },
   api: {

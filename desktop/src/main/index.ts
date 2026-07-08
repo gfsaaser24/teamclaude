@@ -1,12 +1,26 @@
 import { app, globalShortcut, type Tray } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
+import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import Store from 'electron-store'
 import { Supervisor } from './supervisor'
 import { ProxyClient } from './proxy-client'
-import { readTeamclaudeConfig } from './teamclaude-config'
+import { getTeamclaudeConfigPath } from './teamclaude-config'
+import { ensureAppProxyConfig } from './app-proxy-config'
 import { registerIpc, DEFAULT_SETTINGS, type AppSettings, type Project } from './ipc'
 import { createFlyout, toggleFlyout, getFlyout, setPinned } from './flyout'
 import { createTray } from './tray'
+
+/** Locate this branch's proxy entry (src/index.js) for the app to run. */
+function resolveProxyEntry(): string {
+  const candidates = [
+    join(app.getAppPath(), '..', 'src', 'index.js'),   // packaged/dev: repo/desktop -> repo/src
+    join(process.cwd(), 'src', 'index.js'),
+    join(process.cwd(), '..', 'src', 'index.js'),
+    'C:/code/teamclaude/src/index.js',
+  ]
+  return candidates.find(c => existsSync(c)) ?? candidates[0]
+}
 
 if (!app.requestSingleInstanceLock()) app.quit()
 
@@ -18,18 +32,26 @@ async function bootstrap(): Promise<void> {
   electronApp.setAppUserModelId('com.teamclaude.desktop')
   app.on('browser-window-created', (_e, win) => optimizer.watchWindowShortcuts(win))
 
-  const cfg = await readTeamclaudeConfig()
-  const port = cfg?.proxy.port ?? 3456
-  const apiKey = cfg?.proxy.apiKey ?? ''
   const settings: AppSettings = { ...DEFAULT_SETTINGS, ...store.get('settings', DEFAULT_SETTINGS) }
 
+  // The app owns a dedicated proxy: its own config file, on its own free port,
+  // seeded once from the user's shared config. This is what makes "just launch
+  // it" the whole workflow — no port to reconcile, no env var, and Start/Stop
+  // control a process the app actually owns.
+  const appConfigPath = join(app.getPath('userData'), 'teamclaude-proxy.json')
+  const prov = await ensureAppProxyConfig({ configPath: appConfigPath, sharedConfigPath: getTeamclaudeConfigPath() })
+  const proxyEntry = resolveProxyEntry()
+  const proxyInfo = { port: prov.port, url: `http://127.0.0.1:${prov.port}`, configPath: appConfigPath }
+
   const supervisor = new Supervisor({
-    command: settings.teamclaudeCommand,
-    args: settings.teamclaudeArgs,
-    port,
-    apiKey,
+    command: 'node',
+    args: [proxyEntry, 'server', '--headless'],
+    port: prov.port,
+    apiKey: prov.apiKey,
+    env: { TEAMCLAUDE_CONFIG: appConfigPath },
+    requireCompatible: true,
   })
-  const client = new ProxyClient({ port, apiKey })
+  const client = new ProxyClient({ port: prov.port, apiKey: prov.apiKey })
 
   const applySettings = (s: AppSettings): void => {
     globalShortcut.unregisterAll()
@@ -38,7 +60,7 @@ async function bootstrap(): Promise<void> {
   }
   applySettings(settings)
 
-  registerIpc({ supervisor, client, store, getFlyout, setPinned, applySettings })
+  registerIpc({ supervisor, client, store, getFlyout, setPinned, applySettings, proxyInfo })
   createFlyout()
   tray = createTray({ supervisor, onToggle: toggleFlyout, onQuit: () => app.quit() })
 

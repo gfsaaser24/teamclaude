@@ -8,6 +8,14 @@ export interface SupervisorOptions {
   args: string[]
   port: number
   apiKey: string
+  /** Extra env for the spawned child (e.g. TEAMCLAUDE_CONFIG). Merged over process.env. */
+  env?: NodeJS.ProcessEnv
+  /**
+   * Only attach to an already-running proxy if it's a compatible teamclaude
+   * (answers /teamclaude/log). Prevents latching onto an older/foreign proxy
+   * that happens to sit on our port. Default true.
+   */
+  requireCompatible?: boolean
 }
 
 /**
@@ -46,10 +54,28 @@ export class Supervisor extends EventEmitter {
     }
   }
 
+  /** True only if the proxy on our port is a compatible teamclaude (has /teamclaude/log). */
+  async isCompatible(): Promise<boolean> {
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.opts.port}/teamclaude/log`, {
+        headers: { 'x-api-key': this.opts.apiKey },
+        signal: AbortSignal.timeout(1500),
+      })
+      return res.ok
+    } catch {
+      return false
+    }
+  }
+
   async start(): Promise<void> {
     this.stopping = false
     if (await this.isUp()) {
-      this.setState('attached')
+      const compatible = this.opts.requireCompatible === false || await this.isCompatible()
+      if (compatible) { this.setState('attached'); return }
+      // Something incompatible (e.g. an older proxy) holds our port. Don't
+      // attach to it and don't try to bind the same port; surface 'crashed' so
+      // the app can re-provision onto a different free port.
+      this.setState('crashed')
       return
     }
     this.spawnChild()
@@ -67,6 +93,7 @@ export class Supervisor extends EventEmitter {
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: useShell,
       windowsHide: true,
+      env: { ...process.env, ...(this.opts.env ?? {}) },
     })
     this.child = child
     // On Windows the shell wraps the real process in cmd.exe; `child.kill()`

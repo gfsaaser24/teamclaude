@@ -51,6 +51,19 @@ describe('Supervisor', () => {
     expect(sup.state).toBe('attached')
   })
 
+  it('does NOT attach to an incompatible proxy (no /teamclaude/log)', async () => {
+    // Answers /status 200 but 404s /teamclaude/log — an older/foreign proxy.
+    const server = createServer((req, res) => {
+      if (req.url === '/teamclaude/log') { res.writeHead(404); res.end() }
+      else { res.writeHead(200); res.end('{}') }
+    })
+    const port = await listen(server)
+    cleanup.push(() => new Promise<void>(r => server.close(() => r())))
+    const sup = new Supervisor({ command: process.execPath, args: ['-e', ''], port, apiKey: 'k', requireCompatible: true })
+    await sup.start()
+    expect(sup.state).not.toBe('attached')
+  })
+
   it('spawns the child and reaches running, then stops cleanly', async () => {
     const port = await freePort()
     const script = fakeProxyScript()

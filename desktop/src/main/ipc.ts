@@ -25,6 +25,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   teamclaudeArgs: ['server', '--headless'],
 }
 
+export interface ProxyInfo { port: number; url: string; configPath: string }
+
 export interface IpcDeps {
   supervisor: Supervisor
   client: ProxyClient
@@ -32,6 +34,7 @@ export interface IpcDeps {
   getFlyout: () => BrowserWindow | null
   setPinned: (pinned: boolean) => void
   applySettings: (s: AppSettings) => void   // re-register hotkey, login item (Task 5)
+  proxyInfo: ProxyInfo                        // the app-owned proxy's port/url/configPath
 }
 
 function broadcast(channel: string, payload: unknown): void {
@@ -174,6 +177,8 @@ export function registerIpc(deps: IpcDeps): () => void {
     deps.applySettings(next)
     return next
   })
+
+  ipcMain.handle('tc:proxy:getInfo', () => deps.proxyInfo)
 
   ipcMain.handle('tc:window:setPinned', (_e, pinned: boolean) => deps.setPinned(pinned))
   ipcMain.handle('tc:window:hide', () => deps.getFlyout()?.hide())
