@@ -28,7 +28,7 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: TeamClaude-${version}-setup.${ext}
   shortcutName: TeamClaude
   uninstallDisplayName: TeamClaude
   createDesktopShortcut: always
