@@ -5,8 +5,7 @@ import { existsSync } from 'node:fs'
 import Store from 'electron-store'
 import { Supervisor } from './supervisor'
 import { ProxyClient } from './proxy-client'
-import { getTeamclaudeConfigPath } from './teamclaude-config'
-import { ensureAppProxyConfig } from './app-proxy-config'
+import { getTeamclaudeConfigPath, readTeamclaudeConfig } from './teamclaude-config'
 import { registerIpc, applyAutoRoute, DEFAULT_SETTINGS, type AppSettings, type Project } from './ipc'
 import { createFlyout, toggleFlyout, getFlyout, setPinned } from './flyout'
 import { createTray } from './tray'
@@ -36,29 +35,27 @@ async function bootstrap(): Promise<void> {
 
   const settings: AppSettings = { ...DEFAULT_SETTINGS, ...store.get('settings', DEFAULT_SETTINGS) }
 
-  // The app owns a dedicated proxy: its own config file, on its own free port,
-  // seeded once from the user's shared config. This is what makes "just launch
-  // it" the whole workflow — no port to reconcile, no env var, and Start/Stop
-  // control a process the app actually owns.
-  const appConfigPath = join(app.getPath('userData'), 'teamclaude-proxy.json')
-  const prov = await ensureAppProxyConfig({ configPath: appConfigPath, sharedConfigPath: getTeamclaudeConfigPath() })
+  // The app IS the user's teamclaude: it runs the proxy against the SAME shared
+  // config (~/.config/teamclaude.json), same port and same settings — accounts,
+  // switchThreshold, quotaProbeSeconds, routes, sx — so it behaves exactly like
+  // `teamclaude server`, not a stripped-down copy.
+  const cfg = await readTeamclaudeConfig()
+  const port = cfg?.proxy.port ?? 3456
+  const apiKey = cfg?.proxy.apiKey ?? ''
   const proxyEntry = resolveProxyEntry()
-  const proxyInfo = { port: prov.port, url: `http://127.0.0.1:${prov.port}`, configPath: appConfigPath }
+  const proxyInfo = { port, url: `http://127.0.0.1:${port}`, configPath: getTeamclaudeConfigPath() }
 
-  // In the packaged app there's no external `node`; run the proxy with
-  // Electron's own Node (ELECTRON_RUN_AS_NODE). In dev, plain `node`.
   const supervisor = new Supervisor({
     command: app.isPackaged ? process.execPath : 'node',
     args: [proxyEntry, 'server', '--headless'],
-    port: prov.port,
-    apiKey: prov.apiKey,
-    env: {
-      TEAMCLAUDE_CONFIG: appConfigPath,
-      ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
-    },
+    port,
+    apiKey,
+    // NO TEAMCLAUDE_CONFIG override → the child reads the default shared config
+    // with ALL the user's settings. Only ELECTRON_RUN_AS_NODE (packaged) is set.
+    env: app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : undefined,
     requireCompatible: true,
   })
-  const client = new ProxyClient({ port: prov.port, apiKey: prov.apiKey })
+  const client = new ProxyClient({ port, apiKey })
 
   const applySettings = (s: AppSettings): void => {
     globalShortcut.unregisterAll()
