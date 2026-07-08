@@ -24,13 +24,17 @@ export interface TcConfig {
   warmupSeconds?: number
   routes?: TcRoute[]
   accounts: TcAccount[]
+  sx?: { apiKey?: string; mode?: string }
 }
 export interface RedactedAccount extends Omit<TcAccount, 'accessToken' | 'refreshToken' | 'apiKey'> {
   hasCredential: boolean
 }
-export interface RedactedConfig extends Omit<TcConfig, 'proxy' | 'accounts'> {
+export interface RedactedConfig extends Omit<TcConfig, 'proxy' | 'accounts' | 'sx'> {
   proxy: { port: number; host?: string }
   accounts: RedactedAccount[]
+  // The sx apiKey is a secret and must never reach the renderer — only the mode
+  // and whether a key is configured are exposed.
+  sx?: { mode?: string; hasKey: boolean }
 }
 
 // Mirrors src/config.js getConfigPath() so both sides always agree.
@@ -70,12 +74,15 @@ export async function updateTeamclaudeConfig(mutator: (cfg: TcConfig) => void): 
 }
 
 export function redactConfig(cfg: TcConfig): RedactedConfig {
+  const { sx, ...rest } = cfg
   return {
-    ...cfg,
+    ...rest,
     proxy: { port: cfg.proxy.port, host: cfg.proxy.host },
-    accounts: cfg.accounts.map(({ accessToken, refreshToken, apiKey, ...rest }) => ({
-      ...rest,
-      hasCredential: Boolean(accessToken || apiKey || rest.importFrom),
+    accounts: cfg.accounts.map(({ accessToken, refreshToken, apiKey, ...acct }) => ({
+      ...acct,
+      hasCredential: Boolean(accessToken || apiKey || acct.importFrom),
     })),
+    // Strip the sx apiKey — expose only the mode and whether a key is set.
+    ...(sx ? { sx: { mode: sx.mode, hasKey: Boolean(sx.apiKey) } } : {}),
   }
 }

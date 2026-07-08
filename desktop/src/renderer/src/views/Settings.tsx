@@ -4,6 +4,13 @@ import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { Label } from '@renderer/components/ui/label'
 import { Switch } from '@renderer/components/ui/switch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@renderer/components/ui/select'
 import { Save, Copy, Check } from 'lucide-react'
 
 interface AppSettings {
@@ -53,6 +60,59 @@ function ConnectCard({ info }: { info: ProxyInfo }): React.JSX.Element {
         <p className="text-[11px] text-muted-foreground">{auto ? 'On — open a NEW terminal and run claude; it routes here automatically.' : 'Or route one session manually:'}</p>
         {!auto && <Row text={cmd} k="cmd" />}
         <p className="text-[11px] text-muted-foreground">Then requests show up in Activity and the quota bars move.</p>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Surfaces teamclaude's existing `config.sx` block: the sx.org IP-rotation proxy
+// that the core proxy already provisions. mode = off | 429 | always. The apiKey
+// is write-only from here — the config API redacts it, so we only ever learn
+// whether one is set (hasKey), never the value.
+function SxCard(): React.JSX.Element {
+  const [mode, setMode] = useState('off')
+  const [hasKey, setHasKey] = useState(false)
+  const [apiKey, setApiKey] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const load = async (): Promise<void> => {
+    const cfg = (await window.tc.config.get().catch(() => null)) as { sx?: { mode?: string; hasKey?: boolean } } | null
+    setMode(cfg?.sx?.mode ?? 'off')
+    setHasKey(Boolean(cfg?.sx?.hasKey))
+  }
+  useEffect(() => { void load() }, [])
+
+  const save = async (): Promise<void> => {
+    await window.tc.config.setSx({ apiKey, mode })
+    setApiKey('')          // never keep the entered secret around in state
+    await load()           // refresh hasKey from the (redacted) config
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2"><CardTitle className="text-sm">sx.org proxy</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-[11px] text-muted-foreground">Routes upstream through sx.org to dodge IP-based 429s. Optional.</p>
+        <div className="space-y-1">
+          <Label className="text-xs">Mode</Label>
+          <Select value={mode} onValueChange={setMode}>
+            <SelectTrigger size="sm" className="h-7 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">off</SelectItem>
+              <SelectItem value="429">429 (only after a rate limit)</SelectItem>
+              <SelectItem value="always">always</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">API key</Label>
+          <Input type="password" value={apiKey} className="h-7 font-mono"
+            placeholder={hasKey ? '•••• configured — leave blank to keep' : 'sx.org API key'}
+            onChange={e => setApiKey(e.target.value)} />
+        </div>
+        <Button size="sm" onClick={() => void save()}><Save className="size-4" /> {saved ? 'Saved' : 'Save sx settings'}</Button>
       </CardContent>
     </Card>
   )
@@ -152,6 +212,7 @@ export default function Settings(): React.JSX.Element {
               </p>
             </CardContent>
           </Card>
+          <SxCard />
           <Button size="sm" onClick={() => void save()}><Save className="size-4" /> {saved ? 'Saved' : 'Save settings'}</Button>
         </>
       )}

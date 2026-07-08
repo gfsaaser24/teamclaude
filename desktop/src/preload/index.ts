@@ -32,6 +32,7 @@ const tc = {
     setAccountPriority: (name: string, priority: number) => ipcRenderer.invoke('tc:config:setAccountPriority', name, priority),
     removeAccount: (name: string) => ipcRenderer.invoke('tc:config:removeAccount', name),
     setRoutes: (routes: unknown[]) => ipcRenderer.invoke('tc:config:setRoutes', routes),
+    setSx: (sx: { apiKey?: string; mode: string }) => ipcRenderer.invoke('tc:config:setSx', sx),
   },
   launcher: {
     list: () => ipcRenderer.invoke('tc:launcher:list'),

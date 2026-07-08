@@ -148,6 +148,16 @@ export function registerIpc(deps: IpcDeps): () => void {
     await updateTeamclaudeConfig(cfg => { cfg.routes = routes })
     await client.reload()
   })
+  ipcMain.handle('tc:config:setSx', async (_e, sx: { apiKey?: string; mode: string }) => {
+    await updateTeamclaudeConfig(cfg => {
+      const mode = sx.mode
+      // Preserve the existing key when the UI sends an empty apiKey (masked field
+      // left untouched); only overwrite when a new key is actually provided.
+      const apiKey = sx.apiKey && sx.apiKey.trim() ? sx.apiKey.trim() : cfg.sx?.apiKey
+      cfg.sx = { ...(apiKey ? { apiKey } : {}), mode }
+    })
+    await client.reload()
+  })
 
   ipcMain.handle('tc:launcher:list', () => store.get('projects', []))
   ipcMain.handle('tc:launcher:add', (_e, p: Project) => {
