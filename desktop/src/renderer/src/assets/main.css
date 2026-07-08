@@ -113,7 +113,19 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html, body, #root {
+    height: 100%;
+  }
   body {
     @apply bg-background text-foreground;
+    /* Frameless flyout: the window must never scroll horizontally — long
+       values (emails, paths, model ids) are truncated within their cards. */
+    overflow: hidden;
   }
 }
+
+/* Frameless-window drag handles. Apply `app-drag` to a chrome region (the
+   header) to let the user move the window, and `app-no-drag` to interactive
+   children inside it so clicks still register. */
+.app-drag { -webkit-app-region: drag; }
+.app-no-drag { -webkit-app-region: no-drag; }

@@ -26,11 +26,11 @@ export default function App(): React.JSX.Element {
 
   const badge = STATE_BADGE[proxyState] ?? STATE_BADGE.stopped
   return (
-    <div className="flex h-screen flex-col bg-background/95 text-foreground">
-      <header className="flex items-center gap-2 border-b px-4 py-3">
+    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background/95 text-foreground">
+      <header className="app-drag flex shrink-0 items-center gap-2 border-b px-4 py-3">
         <span className="text-sm font-semibold tracking-tight">TeamClaude</span>
         <Badge variant={badge.variant}>{badge.label}</Badge>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="app-no-drag ml-auto flex items-center gap-1">
           <Button variant="ghost" size="icon" aria-label="Pin panel"
             onClick={() => { const next = !pinned; setPinnedState(next); void window.tc.window.setPinned(next) }}>
             {pinned ? <Pin className="size-4" /> : <PinOff className="size-4 opacity-50" />}

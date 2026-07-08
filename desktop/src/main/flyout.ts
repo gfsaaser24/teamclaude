@@ -7,6 +7,7 @@ const MARGIN = 12
 
 let flyout: BrowserWindow | null = null
 let pinned = false
+let userMoved = false   // once the user drags/resizes, stop snapping back to the edge
 
 export function getFlyout(): BrowserWindow | null { return flyout }
 export function setPinned(v: boolean): void { pinned = v }
@@ -20,8 +21,9 @@ export function createFlyout(): BrowserWindow {
     y: workArea.y + MARGIN,
     show: false,
     frame: false,
-    resizable: false,
-    movable: false,
+    resizable: true,
+    minWidth: 360,
+    movable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
     backgroundMaterial: 'acrylic',   // Win11 flyout look; harmless elsewhere
@@ -33,6 +35,8 @@ export function createFlyout(): BrowserWindow {
     },
   })
   flyout.on('blur', () => { if (!pinned) flyout?.hide() })
+  flyout.on('moved', () => { userMoved = true })
+  flyout.on('resized', () => { userMoved = true })
   flyout.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)          // oauth-url etc. open in the default browser
     return { action: 'deny' }
@@ -48,14 +52,17 @@ export function createFlyout(): BrowserWindow {
 export function toggleFlyout(): void {
   if (!flyout) return
   if (flyout.isVisible()) { flyout.hide(); return }
-  // Re-anchor in case display metrics changed since creation.
-  const { workArea } = screen.getPrimaryDisplay()
-  flyout.setBounds({
-    width: WIDTH,
-    height: workArea.height - MARGIN * 2,
-    x: workArea.x + workArea.width - WIDTH - MARGIN,
-    y: workArea.y + MARGIN,
-  })
+  // Anchor to the right edge only until the user has moved/resized it; after
+  // that we respect their chosen position instead of snapping it back.
+  if (!userMoved) {
+    const { workArea } = screen.getPrimaryDisplay()
+    flyout.setBounds({
+      width: WIDTH,
+      height: workArea.height - MARGIN * 2,
+      x: workArea.x + workArea.width - WIDTH - MARGIN,
+      y: workArea.y + MARGIN,
+    })
+  }
   flyout.show()
   flyout.focus()
 }
