@@ -2,7 +2,13 @@ export interface TcEvent { id: number; type: string; ts: number; [k: string]: un
 export interface TcAccountStatus {
   name: string; type: string; orgName: string | null; priority: number
   disabled: boolean; status: string
-  quota: Record<string, { utilization?: number; resetsAt?: string } | undefined>
+  quota: {
+    unified5h: number | null; unified5hReset: number | null
+    unified7d: number | null; unified7dReset: number | null
+    unified7dSonnet: number | null; unified7dSonnetReset: number | null
+    unified7dFable: number | null; unified7dFableReset: number | null
+    [k: string]: unknown
+  }
   usage: Record<string, unknown>
   rateLimitedUntil: string | null
 }

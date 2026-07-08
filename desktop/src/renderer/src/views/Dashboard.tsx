@@ -105,11 +105,23 @@ export default function Dashboard(): React.JSX.Element {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {Object.entries(a.quota ?? {}).map(([bucket, q]) => (
-                  <QuotaBar key={bucket} label={bucket} utilization={q?.utilization} resetsAt={q?.resetsAt} />
-                ))}
-                {Object.keys(a.quota ?? {}).length === 0 && (
-                  <p className="text-xs text-muted-foreground">No quota observed yet</p>
+                {a.quota.unified5h == null && a.quota.unified7d == null ? (
+                  <p className="text-xs text-muted-foreground">Waiting for quota data…</p>
+                ) : (
+                  <>
+                    {typeof a.quota.unified5h === 'number' && (
+                      <QuotaBar label="Session" ratio={a.quota.unified5h} resetMs={a.quota.unified5hReset} />
+                    )}
+                    {typeof a.quota.unified7d === 'number' && (
+                      <QuotaBar label="Weekly" ratio={a.quota.unified7d} resetMs={a.quota.unified7dReset} />
+                    )}
+                    {typeof a.quota.unified7dSonnet === 'number' && (
+                      <QuotaBar label="Sonnet" ratio={a.quota.unified7dSonnet} resetMs={a.quota.unified7dSonnetReset} />
+                    )}
+                    {typeof a.quota.unified7dFable === 'number' && (
+                      <QuotaBar label="Fable" ratio={a.quota.unified7dFable} resetMs={a.quota.unified7dFableReset} />
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
