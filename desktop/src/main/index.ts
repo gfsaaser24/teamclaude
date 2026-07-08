@@ -8,7 +8,7 @@ import { ProxyClient } from './proxy-client'
 import { getTeamclaudeConfigPath, readTeamclaudeConfig } from './teamclaude-config'
 import { registerIpc, applyAutoRoute, DEFAULT_SETTINGS, type AppSettings, type Project } from './ipc'
 import { createFlyout, toggleFlyout, getFlyout, setPinned, setCompact } from './flyout'
-import { toggleDock, setDockExpanded, isDockOpen, destroyDock } from './dock'
+import { toggleDock, setDockExpanded, setDockOpacity, isDockOpen, destroyDock } from './dock'
 import { createTray } from './tray'
 
 /** Locate the teamclaude proxy entry the app runs — bundled in the packaged
@@ -65,13 +65,15 @@ async function bootstrap(): Promise<void> {
   }
   applySettings(settings)
 
-  registerIpc({ supervisor, client, store, getFlyout, setPinned, setCompact, toggleDock, setDockExpanded, isDockOpen, applySettings, proxyInfo })
+  registerIpc({ supervisor, client, store, getFlyout, setPinned, setCompact, toggleDock, setDockExpanded, setDockOpacity, isDockOpen, applySettings, proxyInfo })
 
   // If the user turned on auto-route, re-assert it on launch (the port is
   // stable, but this keeps the env var correct if it ever changed).
   if (settings.autoRoute) void applyAutoRoute(true, proxyInfo.url)
 
   createFlyout()
+  // Seed the stored opacity first so it's applied the moment the dock is created.
+  setDockOpacity(settings.dockOpacity ?? DEFAULT_SETTINGS.dockOpacity ?? 0.92)
   if (settings.showDock) toggleDock(true)   // opt-in persistent edge dock (micro-HUD)
   tray = createTray({ supervisor, onToggle: toggleFlyout, onQuit: () => app.quit() })
 

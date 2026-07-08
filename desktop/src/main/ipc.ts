@@ -18,6 +18,7 @@ export interface AppSettings {
   autoRoute?: boolean
   claudeFlags?: string[]   // Claude Code CLI flags appended to the auto-terminal's `claude` command
   showDock?: boolean       // opt-in edge dock (micro-HUD) — persisted, off by default
+  dockOpacity?: number     // edge dock window opacity [0.25, 1]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -29,6 +30,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoRoute: false,
   claudeFlags: [],
   showDock: false,
+  dockOpacity: 0.92,
 }
 
 function runCmd(cmd: string, args: string[]): Promise<void> {
@@ -57,6 +59,7 @@ export interface IpcDeps {
   setCompact: (on: boolean) => void         // shrink the flyout into the HUD and back
   toggleDock: (on: boolean) => void         // create/show or destroy the edge dock (micro-HUD)
   setDockExpanded: (on: boolean) => void    // resize the dock between collapsed tab / expanded panel
+  setDockOpacity: (v: number) => void       // set the dock window's transparency [0.25, 1]
   isDockOpen: () => boolean                 // whether the dock window currently exists
   applySettings: (s: AppSettings) => void   // re-register hotkey, login item (Task 5)
   proxyInfo: ProxyInfo                        // the app-owned proxy's port/url/configPath
@@ -247,6 +250,7 @@ export function registerIpc(deps: IpcDeps): () => void {
 
   ipcMain.handle('tc:dock:toggle', (_e, on: boolean) => deps.toggleDock(on))
   ipcMain.handle('tc:dock:setExpanded', (_e, on: boolean) => deps.setDockExpanded(on))
+  ipcMain.handle('tc:dock:setOpacity', (_e, v: number) => deps.setDockOpacity(v))
   ipcMain.handle('tc:dock:isOpen', () => deps.isDockOpen())
 
   return () => disconnectEvents()

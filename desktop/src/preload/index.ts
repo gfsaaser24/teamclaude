@@ -52,6 +52,7 @@ const tc = {
   dock: {
     toggle: (on: boolean) => ipcRenderer.invoke('tc:dock:toggle', on),
     setExpanded: (on: boolean) => ipcRenderer.invoke('tc:dock:setExpanded', on),
+    setOpacity: (v: number) => ipcRenderer.invoke('tc:dock:setOpacity', v),
     isOpen: () => ipcRenderer.invoke('tc:dock:isOpen'),
   },
 }

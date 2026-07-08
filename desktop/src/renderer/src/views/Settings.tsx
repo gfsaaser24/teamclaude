@@ -10,6 +10,7 @@ interface AppSettings {
   editorCommand: string; hotkey: string; launchAtLogin: boolean
   teamclaudeCommand: string; teamclaudeArgs: string[]
   showDock?: boolean
+  dockOpacity?: number
 }
 
 interface ProxyInfo { port: number; url: string; configPath: string }
@@ -104,6 +105,35 @@ export default function Settings(): React.JSX.Element {
                   void window.tc.settings.set({ showDock: v })
                   void window.tc.dock.toggle(v)
                 }} />
+              </div>
+              {/* Transparency — whole-window opacity of the edge dock. Live-applies
+                  as you drag; only meaningful while the dock is on. */}
+              <div className={`space-y-1.5 ${s.showDock ? '' : 'opacity-50'}`}>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Dock transparency</Label>
+                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                    {Math.round((s.dockOpacity ?? 0.92) * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range" min="0.25" max="1" step="0.01"
+                  aria-label="Dock transparency"
+                  value={s.dockOpacity ?? 0.92}
+                  disabled={!s.showDock}
+                  onChange={e => {
+                    const v = Number(e.target.value)
+                    setS({ ...s, dockOpacity: v })
+                    void window.tc.settings.set({ dockOpacity: v })
+                    void window.tc.dock.setOpacity(v)
+                  }}
+                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 outline-none
+                             disabled:cursor-not-allowed disabled:opacity-60
+                             [&::-webkit-slider-thumb]:size-3.5 [&::-webkit-slider-thumb]:appearance-none
+                             [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary
+                             [&::-webkit-slider-thumb]:shadow [&::-webkit-slider-thumb]:ring-1
+                             [&::-webkit-slider-thumb]:ring-black/30 [&::-webkit-slider-thumb]:transition-transform
+                             [&::-webkit-slider-thumb]:hover:scale-110"
+                />
               </div>
             </CardContent>
           </Card>

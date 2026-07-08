@@ -4,13 +4,17 @@ import { is } from '@electron-toolkit/utils'
 
 // A persistent, semi-transparent micro-HUD pinned to the right screen edge. It
 // is a SEPARATE window from the flyout: always-on-top, never hidden on blur, and
-// only ever two widths — a thin collapsed tab or an expanded gauge panel. It
+// only ever two widths — a narrow collapsed strip or an expanded gauge panel. It
 // stays anchored to the right edge as it grows/shrinks (x is recomputed from the
-// new width) and vertically centered.
-const COLLAPSED = 26
-const EXPANDED = 188
+// new width) and vertically centered. Collapsed is wide enough for a size-32 ring
+// plus padding so it works as a glanceable per-account HUD strip.
+const COLLAPSED = 56
+const EXPANDED = 200
 
 let dock: BrowserWindow | null = null
+// Last-applied window opacity, re-asserted whenever the dock is (re)created so a
+// destroy/recreate (toggle off/on) doesn't reset the user's transparency choice.
+let dockOpacity = 1
 
 export function isDockOpen(): boolean {
   return dock !== null && !dock.isDestroyed()
@@ -50,6 +54,7 @@ export function createDock(): BrowserWindow {
   // Float above ordinary always-on-top windows (incl. the flyout) so the HUD is
   // never occluded. It is a status readout, not a focus target.
   dock.setAlwaysOnTop(true, 'screen-saver')
+  dock.setOpacity(dockOpacity)   // re-apply the stored transparency on (re)create
   // Persistent HUD: intentionally NO 'blur' handler — it must not self-hide.
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
     dock.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?view=dock`)
@@ -73,6 +78,14 @@ export function destroyDock(): void {
 export function setDockExpanded(on: boolean): void {
   if (!dock || dock.isDestroyed()) return
   dock.setBounds(boundsFor(on ? EXPANDED : COLLAPSED))
+}
+
+/** Set the dock window's opacity (whole-window alpha), clamped to a legible
+ *  range so the HUD can't be dialled to invisible. Remembered and re-applied on
+ *  the next (re)create. No-op on the window if the dock isn't open. */
+export function setDockOpacity(value: number): void {
+  dockOpacity = Math.min(1, Math.max(0.25, value))
+  if (dock && !dock.isDestroyed()) dock.setOpacity(dockOpacity)
 }
 
 /** Create+show (opt-in) or tear the dock down entirely. */
