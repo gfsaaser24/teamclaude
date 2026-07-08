@@ -1,6 +1,7 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { spawn } from 'node:child_process'
+import { spawn, execSync } from 'node:child_process'
 import { writeFile, mkdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import Store from 'electron-store'
 import type { Supervisor } from './supervisor'
@@ -35,6 +36,36 @@ export interface IpcDeps {
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
+}
+
+/**
+ * Resolve the editor command to a launchable executable. Returns null when it
+ * can't be found — so the launcher reports a real error instead of silently
+ * "succeeding" through a shell (the old `shell:true` masked a missing `trae`).
+ * Order: an explicit existing path → the command on PATH → known Trae install.
+ */
+function resolveEditorExe(editorCommand: string): string | null {
+  const cmd = editorCommand.trim()
+  // 1. An explicit path the user typed (absolute or with an extension).
+  if ((cmd.includes('\\') || cmd.includes('/') || /\.(exe|cmd|bat)$/i.test(cmd)) && existsSync(cmd)) {
+    return cmd
+  }
+  // 2. A bare command that's actually on PATH.
+  try {
+    const found = execSync(`where "${cmd}"`, { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim().split(/\r?\n/)[0]
+    if (found && existsSync(found)) return found
+  } catch { /* not on PATH */ }
+  // 3. Known Trae install (VS Code-family layout) — covers the default "trae"
+  //    when its CLI shim was never added to PATH.
+  if (/trae/i.test(cmd)) {
+    const local = process.env.LOCALAPPDATA
+    const candidates = local
+      ? [join(local, 'Programs', 'Trae', 'Trae.exe'), join(local, 'Programs', 'Trae CN', 'Trae CN.exe')]
+      : []
+    for (const c of candidates) if (existsSync(c)) return c
+  }
+  return null
 }
 
 export function registerIpc(deps: IpcDeps): () => void {
@@ -120,9 +151,17 @@ export function registerIpc(deps: IpcDeps): () => void {
           }],
         }, null, 2), { flag: 'wx' }).catch(() => { /* exists — leave the user's file alone */ })
       }
-      const child = spawn(settings.editorCommand, [path], { shell: true, detached: true, stdio: 'ignore' })
+      const exe = resolveEditorExe(settings.editorCommand)
+      if (!exe) {
+        return { ok: false, error: `Editor "${settings.editorCommand}" not found. Set its full path in Settings (e.g. Trae.exe).` }
+      }
+      // A .cmd/.bat shim needs a shell; a real .exe is launched directly so a
+      // failure surfaces as an error rather than being swallowed by the shell.
+      const useShell = /\.(cmd|bat)$/i.test(exe)
+      const child = spawn(exe, [path], { shell: useShell, detached: true, stdio: 'ignore' })
+      child.on('error', () => { /* reported below via ok:false is not possible post-detach; logged */ })
       child.unref()
-      return { ok: true }
+      return { ok: true, editor: exe }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
