@@ -162,16 +162,15 @@ export function registerIpc(deps: IpcDeps): () => void {
       if (project?.autorun) {
         const raw = (project?.autorun ?? '').trim()
         const flags = settings.claudeFlags ?? []
-        const runCmd = raw && raw !== 'teamclaude run' ? raw : ['claude', ...flags].join(' ')
-        // Set ANTHROPIC_BASE_URL via the task's env (shell-agnostic) rather than
-        // an inline `set … &&`, which breaks under PowerShell (the default VS
-        // Code/Trae terminal shell on Windows doesn't accept cmd's `&&`). The
-        // command is then just `claude …` and routes at this app's own proxy.
+        // Route through `teamclaude run` — identical to how the user runs it in
+        // the CLI (it sets up the proxy/MITM and forwards flags to claude).
+        // Default when no custom command is set; migrate the legacy 'claude'.
+        const base = raw && raw !== 'claude' ? raw : 'teamclaude run'
+        const runCmd = [base, ...flags].join(' ')
         const task = {
           label: 'TeamClaude: open terminal',
           type: 'shell',
           command: runCmd,
-          options: { env: { ANTHROPIC_BASE_URL: deps.proxyInfo.url } },
           presentation: { reveal: 'always', focus: true, panel: 'new' },
           runOptions: { runOn: 'folderOpen' },
         }

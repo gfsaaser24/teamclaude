@@ -64,10 +64,10 @@ export default function Launcher(): React.JSX.Element {
   const { projects, refreshProjects } = useTcStore()
   const [error, setError] = useState<string | null>(null)
   const [autoTerminal, setAutoTerminal] = useState(true)
-  // Runs plain `claude`, routed through this app's own proxy — the open
-  // handler prefixes ANTHROPIC_BASE_URL so the terminal always points at the
-  // live app proxy (see tc:launcher:open in src/main/ipc.ts).
-  const [autorunCmd, setAutorunCmd] = useState('claude')
+  // Runs `teamclaude run` — identical to the CLI: it sets up the proxy/MITM
+  // routing and account rotation itself, and forwards any Claude flags to
+  // claude (see tc:launcher:open in src/main/ipc.ts).
+  const [autorunCmd, setAutorunCmd] = useState('teamclaude run')
 
   // Claude launch options — a global default (stored in settings.claudeFlags)
   // appended to the auto-terminal's `claude` command for launcher-opened projects.
@@ -94,7 +94,7 @@ export default function Launcher(): React.JSX.Element {
     setSelects(next)
     persist(bools, next)
   }
-  const preview = ['claude', ...composeFlags(bools, selects)].join(' ')
+  const preview = ['teamclaude run', ...composeFlags(bools, selects)].join(' ')
 
   const addProject = async (): Promise<void> => {
     const path = await window.tc.launcher.pickFolder()
@@ -124,8 +124,8 @@ export default function Launcher(): React.JSX.Element {
             <Plus className="size-4" /> Add project folder
           </Button>
           <p className="text-[11px] text-muted-foreground">
-            Auto-terminal writes a .vscode/tasks.json (folderOpen task) that runs claude through this
-            app&apos;s proxy. The editor asks once to allow automatic tasks.
+            Auto-terminal writes a .vscode/tasks.json (folderOpen task) that runs teamclaude run,
+            which sets up the proxy/MITM routing itself. The editor asks once to allow automatic tasks.
           </p>
         </CardContent>
       </Card>
@@ -158,7 +158,7 @@ export default function Launcher(): React.JSX.Element {
             {preview}
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Applies to projects opened via the launcher (appended to the auto-terminal&apos;s claude command).
+            Applies to projects opened via the launcher (appended to the auto-terminal&apos;s teamclaude run command).
           </p>
         </CardContent>
       </Card>
