@@ -16,6 +16,7 @@ export interface AppSettings {
   teamclaudeCommand: string
   teamclaudeArgs: string[]
   autoRoute?: boolean
+  claudeFlags?: string[]   // Claude Code CLI flags appended to the auto-terminal's `claude` command
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -25,6 +26,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   teamclaudeCommand: 'teamclaude',
   teamclaudeArgs: ['server', '--headless'],
   autoRoute: false,
+  claudeFlags: [],
 }
 
 function runCmd(cmd: string, args: string[]): Promise<void> {
@@ -159,7 +161,8 @@ export function registerIpc(deps: IpcDeps): () => void {
       // when the project opted in (autorun set).
       if (project?.autorun) {
         const raw = (project?.autorun ?? '').trim()
-        const runCmd = raw && raw !== 'teamclaude run' ? raw : 'claude'
+        const flags = settings.claudeFlags ?? []
+        const runCmd = raw && raw !== 'teamclaude run' ? raw : ['claude', ...flags].join(' ')
         // Route this terminal explicitly at the app's own proxy (robust even if the
         // terminal didn't inherit the persisted ANTHROPIC_BASE_URL).
         const termCmd = `set "ANTHROPIC_BASE_URL=${deps.proxyInfo.url}" && ${runCmd}`
