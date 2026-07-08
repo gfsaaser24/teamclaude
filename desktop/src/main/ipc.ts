@@ -163,13 +163,15 @@ export function registerIpc(deps: IpcDeps): () => void {
         const raw = (project?.autorun ?? '').trim()
         const flags = settings.claudeFlags ?? []
         const runCmd = raw && raw !== 'teamclaude run' ? raw : ['claude', ...flags].join(' ')
-        // Route this terminal explicitly at the app's own proxy (robust even if the
-        // terminal didn't inherit the persisted ANTHROPIC_BASE_URL).
-        const termCmd = `set "ANTHROPIC_BASE_URL=${deps.proxyInfo.url}" && ${runCmd}`
+        // Set ANTHROPIC_BASE_URL via the task's env (shell-agnostic) rather than
+        // an inline `set … &&`, which breaks under PowerShell (the default VS
+        // Code/Trae terminal shell on Windows doesn't accept cmd's `&&`). The
+        // command is then just `claude …` and routes at this app's own proxy.
         const task = {
           label: 'TeamClaude: open terminal',
           type: 'shell',
-          command: termCmd,
+          command: runCmd,
+          options: { env: { ANTHROPIC_BASE_URL: deps.proxyInfo.url } },
           presentation: { reveal: 'always', focus: true, panel: 'new' },
           runOptions: { runOn: 'folderOpen' },
         }
