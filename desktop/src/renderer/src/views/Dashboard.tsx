@@ -2,10 +2,21 @@ import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+} from '@renderer/components/ui/select'
 import { RotateCw, Play, Square, RefreshCw, ChevronLeft, ChevronRight, Zap } from 'lucide-react'
 import { useTcStore } from '../store'
 import RadialMeter from '../components/RadialMeter'
 import type { TcAccountStatus } from '../types'
+
+// Sentinel value for the switcher's "Auto-rotate" item — cannot collide with a
+// real account name (teamclaude account names are email-ish, never dunder).
+const AUTO = '__auto__'
 
 // Proxy state → status-dot colour. Keeps the HUD readable at a glance even when
 // the window is shrunk to 240px and the badge text is the only other signal.
@@ -103,6 +114,11 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
     await window.tc.account.pin(null)
     await refreshStatus()
   }
+  // Direct switcher: pick any account (pin) or return to auto-rotation.
+  const pick = async (v: string): Promise<void> => {
+    await window.tc.account.pin(v === AUTO ? null : v)
+    await refreshStatus()
+  }
 
   return (
     <div className="space-y-3">
@@ -111,10 +127,50 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
       <div className="rounded-xl border border-primary/25 bg-card/70 p-3 shadow-sm ring-1 ring-inset ring-primary/5">
         <div className="flex min-w-0 items-center gap-2">
           <span className={`size-2 shrink-0 rounded-full ${dot}`} aria-hidden />
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight"
-            title={status.currentAccount ?? undefined}>
-            {status.currentAccount ?? 'No active account'}
-          </span>
+          {/* Account switcher — the active-account name doubles as a dropdown:
+              pick any account to pin it, or Auto-rotate to unpin. Trigger is
+              styled as plain text so the HUD reads the same as before. */}
+          {accounts.length > 0 ? (
+            <Select value={status.manualAccount ?? AUTO} onValueChange={v => void pick(v)}>
+              <SelectTrigger
+                size="sm"
+                aria-label="Switch active account"
+                className="h-6 min-w-0 flex-1 justify-start gap-1 rounded-sm border-0 bg-transparent px-1 py-0 shadow-none hover:bg-accent/40 dark:bg-transparent dark:hover:bg-accent/40"
+              >
+                <span className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground"
+                  title={status.currentAccount ?? undefined}>
+                  {status.currentAccount ?? 'No active account'}
+                </span>
+              </SelectTrigger>
+              <SelectContent position="popper" align="start" className="max-w-[280px]">
+                <SelectItem value={AUTO}>
+                  <span className="flex items-center gap-1.5">
+                    <Zap className="size-3.5" /> Auto-rotate
+                  </span>
+                </SelectItem>
+                <SelectSeparator />
+                {accounts.map(a => (
+                  <SelectItem key={a.name} value={a.name}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 truncate">{a.name}</span>
+                      {typeof a.quota.unified7d === 'number' && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          {Math.round(a.quota.unified7d * 100)}% wk
+                        </span>
+                      )}
+                      {a.disabled && <span className="shrink-0 text-[10px] text-muted-foreground">disabled</span>}
+                      {a.rateLimitedUntil && <span className="shrink-0 text-[10px] text-destructive">rate-limited</span>}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight"
+              title={status.currentAccount ?? undefined}>
+              {status.currentAccount ?? 'No active account'}
+            </span>
+          )}
           <span className="shrink-0 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">{proxyState}</span>
           <Button size="icon-sm" variant="ghost" className="shrink-0 text-muted-foreground"
             aria-label="Refresh accounts" title="Refresh accounts &amp; usage"

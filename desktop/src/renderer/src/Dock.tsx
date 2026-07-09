@@ -139,7 +139,7 @@ export default function Dock(): React.JSX.Element {
       <div className="flex h-screen w-screen items-stretch justify-end overflow-hidden bg-transparent">
         <div
           className="app-no-drag relative flex w-full flex-col overflow-hidden rounded-l-xl border border-r-0
-                     border-white/12 bg-neutral-950/60 backdrop-blur-xl
+                     border-white/12 bg-neutral-950
                      shadow-[0_2px_20px_-4px_rgba(0,0,0,0.65)]"
         >
           {/* left accent hairline */}
@@ -225,7 +225,7 @@ export default function Dock(): React.JSX.Element {
     <div className="flex h-screen w-screen items-stretch justify-end overflow-hidden bg-transparent">
       <div
         className="flex w-full flex-col overflow-hidden rounded-l-xl border border-r-0 border-white/12
-                      bg-neutral-950/70 backdrop-blur-xl shadow-[0_2px_24px_-6px_rgba(0,0,0,0.7)]"
+                      bg-neutral-950 shadow-[0_2px_24px_-6px_rgba(0,0,0,0.7)]"
       >
         {/* header — collapse control + count */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-white/8 px-2 py-1.5">
