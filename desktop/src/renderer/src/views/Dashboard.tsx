@@ -1,7 +1,8 @@
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
-import { RotateCw, Play, Square } from 'lucide-react'
+import { RotateCw, Play, Square, RefreshCw } from 'lucide-react'
 import { useTcStore } from '../store'
 import RadialMeter from '../components/RadialMeter'
 import type { TcAccountStatus } from '../types'
@@ -53,7 +54,12 @@ function Gauges({
 }
 
 export default function Dashboard({ compact = false }: { compact?: boolean }): React.JSX.Element {
-  const { status, proxyState, events } = useTcStore()
+  const { status, proxyState, events, refreshStatus, refreshConfig } = useTcStore()
+  const [refreshing, setRefreshing] = useState(false)
+  const refresh = async (): Promise<void> => {
+    setRefreshing(true)
+    try { await Promise.all([refreshStatus(), refreshConfig()]) } finally { setRefreshing(false) }
+  }
   const recentEnds = events.filter(e => e.type === 'request-end').slice(-20)
   const uptime = status?.server ? Math.floor(status.server.uptimeSeconds / 60) : 0
 
@@ -94,6 +100,11 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
             {status.currentAccount ?? 'No active account'}
           </span>
           <span className="shrink-0 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">{proxyState}</span>
+          <Button size="icon-sm" variant="ghost" className="shrink-0 text-muted-foreground"
+            aria-label="Refresh accounts" title="Refresh accounts &amp; usage"
+            onClick={() => void refresh()} disabled={refreshing}>
+            <RefreshCw className={refreshing ? 'animate-spin' : ''} />
+          </Button>
         </div>
 
         <div className="mt-3 flex justify-center">
