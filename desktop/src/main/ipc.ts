@@ -1,6 +1,5 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { spawn, execSync, execFile } from 'node:child_process'
-import { writeFile, mkdir, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import Store from 'electron-store'
@@ -17,7 +16,6 @@ export interface AppSettings {
   teamclaudeCommand: string
   teamclaudeArgs: string[]
   autoRoute?: boolean
-  claudeFlags?: string[]   // Claude Code CLI flags appended to the auto-terminal's `claude` command
   showDock?: boolean       // opt-in edge dock (micro-HUD) — persisted, off by default
   dockOpacity?: number     // edge dock window opacity [0.25, 1]
   onboarded?: boolean      // first-run walkthrough completed/skipped — omitted (falsy) until then
@@ -30,9 +28,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   teamclaudeCommand: 'teamclaude',
   teamclaudeArgs: ['server', '--headless'],
   autoRoute: false,
-  claudeFlags: [],
   showDock: false,
-  dockOpacity: 0.92,
+  dockOpacity: 1,
 }
 
 function runCmd(cmd: string, args: string[]): Promise<void> {
@@ -187,50 +184,12 @@ export function registerIpc(deps: IpcDeps): () => void {
   })
   ipcMain.handle('tc:launcher:open', async (_e, path: string) => {
     const settings = { ...DEFAULT_SETTINGS, ...store.get('settings', DEFAULT_SETTINGS) }
-    const project = store.get('projects', []).find(p => p.path === path)
     try {
-      // Best-effort auto-terminal: a folderOpen task that runs `claude` routed at
-      // this app's own proxy, in the editor's integrated terminal. Written only
-      // when the project opted in (autorun set).
-      if (project?.autorun) {
-        const raw = (project?.autorun ?? '').trim()
-        const flags = settings.claudeFlags ?? []
-        // Route through `teamclaude run` — identical to how the user runs it in
-        // the CLI (it sets up the proxy/MITM and forwards flags to claude).
-        // Default when no custom command is set; migrate the legacy 'claude'.
-        const base = raw && raw !== 'claude' ? raw : 'teamclaude run'
-        const runCmd = [base, ...flags].join(' ')
-        const task = {
-          label: 'TeamClaude: open terminal',
-          type: 'shell',
-          command: runCmd,
-          presentation: { reveal: 'always', focus: true, panel: 'new' },
-          runOptions: { runOn: 'folderOpen' },
-        }
-        const vscodeDir = join(path, '.vscode')
-        await mkdir(vscodeDir, { recursive: true })
-        const tasksPath = join(vscodeDir, 'tasks.json')
-        // Merge into an existing tasks.json — keep the user's other tasks and
-        // replace (or insert) our labelled one — instead of the old write-exclusive
-        // that left the broken `teamclaude run` command in place. A missing file is
-        // written fresh; an unparseable one is backed up to tasks.json.bak first so
-        // hand-written config is never silently destroyed.
-        let out: { version: string; tasks: unknown[] } = { version: '2.0.0', tasks: [task] }
-        let existing: string | null = null
-        try { existing = await readFile(tasksPath, 'utf8') } catch { /* missing — write fresh */ }
-        if (existing !== null) {
-          try {
-            const parsed = JSON.parse(existing) as { version?: string; tasks?: unknown[] }
-            const others = Array.isArray(parsed.tasks)
-              ? parsed.tasks.filter(t => (t as { label?: string } | null)?.label !== task.label)
-              : []
-            out = { version: parsed.version ?? '2.0.0', tasks: [...others, task] }
-          } catch {
-            await writeFile(`${tasksPath}.bak`, existing).catch(() => { /* best-effort backup */ })
-          }
-        }
-        await writeFile(tasksPath, JSON.stringify(out, null, 2)).catch(() => { /* best-effort */ })
-      }
+      // Deliberately no .vscode/tasks.json writing here: a persisted folderOpen
+      // task fires on EVERY open of the folder in any VS Code-family editor —
+      // including manual opens with the app closed — which surprised the user
+      // with self-launching terminals. Terminal routing is auto-route's job
+      // (ANTHROPIC_BASE_URL in the user environment), not per-project tasks.
       const exe = resolveEditorExe(settings.editorCommand)
       if (!exe) {
         return { ok: false, error: `Editor "${settings.editorCommand}" not found. Set its full path in Settings (e.g. Trae.exe).` }

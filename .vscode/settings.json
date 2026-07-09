@@ -1,0 +1,12 @@
+{
+  // Keep editors (VS Code/Trae) from holding handles on build output — a
+  // watched app.asar in desktop/dist EBUSY-blocks every electron-builder run.
+  "files.watcherExclude": {
+    "**/desktop/dist/**": true,
+    "**/desktop/out/**": true
+  },
+  "search.exclude": {
+    "**/desktop/dist/**": true,
+    "**/desktop/out/**": true
+  }
+}

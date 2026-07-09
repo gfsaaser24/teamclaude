@@ -1,8 +1,9 @@
 import { app, globalShortcut, type Tray } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, copyFileSync, mkdirSync } from 'node:fs'
 import Store from 'electron-store'
+import { initFileLog, logLine } from './log'
 import { Supervisor } from './supervisor'
 import { ProxyClient } from './proxy-client'
 import { getTeamclaudeConfigPath, readTeamclaudeConfig } from './teamclaude-config'
@@ -27,11 +28,28 @@ function resolveProxyEntry(): string {
 
 if (!app.requestSingleInstanceLock()) app.quit()
 
+// One-time migration: the app was originally misnamed "desktop" (the generic
+// scaffold package.json name), so settings lived in %APPDATA%/desktop. Now that
+// it has a real name, copy the old settings into the new userData dir once.
+function migrateLegacyUserData(): void {
+  try {
+    const target = join(app.getPath('userData'), 'config.json')
+    if (existsSync(target)) return
+    const legacy = join(app.getPath('appData'), 'desktop', 'config.json')
+    if (!existsSync(legacy)) return
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    copyFileSync(legacy, target)
+  } catch { /* fresh defaults are an acceptable fallback */ }
+}
+migrateLegacyUserData()
+
 const store = new Store<{ settings: AppSettings; projects: Project[] }>()
 let quitting = false
 let tray: Tray | null = null
 
 async function bootstrap(): Promise<void> {
+  initFileLog(app.getPath('userData'))
+  logLine('app', `started v${app.getVersion()} packaged=${app.isPackaged} exec=${process.execPath}`)
   electronApp.setAppUserModelId('com.teamclaude.desktop')
   app.on('browser-window-created', (_e, win) => optimizer.watchWindowShortcuts(win))
 
@@ -75,10 +93,16 @@ async function bootstrap(): Promise<void> {
   })
   const client = new ProxyClient({ port, apiKey })
 
+  supervisor.on('state', s => logLine('supervisor', `state -> ${String(s)}`))
+  supervisor.on('log', (line: string) => logLine('proxy', line))
+
   const applySettings = (s: AppSettings): void => {
     globalShortcut.unregisterAll()
     try { globalShortcut.register(s.hotkey, toggleFlyout) } catch { /* invalid accelerator — keep none */ }
-    app.setLoginItemSettings({ openAtLogin: s.launchAtLogin })
+    // Only manage the login item from a packaged build: in dev process.execPath
+    // is the bare electron binary, and registering it litters the user's
+    // autostart with a broken entry that launches an empty Electron shell.
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.launchAtLogin })
   }
   applySettings(settings)
 
@@ -90,7 +114,7 @@ async function bootstrap(): Promise<void> {
 
   createFlyout()
   // Seed the stored opacity first so it's applied the moment the dock is created.
-  setDockOpacity(settings.dockOpacity ?? DEFAULT_SETTINGS.dockOpacity ?? 0.92)
+  setDockOpacity(settings.dockOpacity ?? DEFAULT_SETTINGS.dockOpacity ?? 1)
   if (settings.showDock) toggleDock(true)   // opt-in persistent edge dock (micro-HUD)
   tray = createTray({ supervisor, onToggle: toggleFlyout, onQuit: () => app.quit() })
 
@@ -111,6 +135,7 @@ async function bootstrap(): Promise<void> {
 }
 
 app.whenReady().then(bootstrap).catch(err => {
+  logLine('app', `bootstrap failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`)
   console.error('[teamclaude-desktop] bootstrap failed:', err)
 })
 app.on('will-quit', () => {
