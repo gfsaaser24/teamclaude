@@ -600,6 +600,16 @@ export class AccountManager {
    */
   selectActiveAccount() {
     this.refreshExpiredQuotas(); // drop any restored windows that already expired
+    // Honor a manual pin so the reported active account matches per-request
+    // routing (getActiveAccount honors it too). Fall through to auto-selection
+    // only when the pinned account can't serve at all.
+    if (this.manualIndex != null) {
+      const pinned = this.accounts[this.manualIndex];
+      if (pinned && this._isAvailable(pinned, null)) {
+        this.currentIndex = this.manualIndex;
+        return pinned;
+      }
+    }
     const best = this._pickBestAvailable();
     if (!best) return this.accounts[this.currentIndex] || null;
     this.currentIndex = best.index;
