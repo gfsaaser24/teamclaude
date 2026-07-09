@@ -21,6 +21,12 @@ export interface SupervisorOptions {
    * can take over if it dies. Default 4000. Kept small only in tests.
    */
   watchdogMs?: number
+  /**
+   * Working directory for the spawned child. Set explicitly so the proxy never
+   * inherits the app's own CWD (the packaged install folder when launched from
+   * a shortcut), which would hold a lock on it.
+   */
+  cwd?: string
 }
 
 /**
@@ -138,6 +144,7 @@ export class Supervisor extends EventEmitter {
       shell: useShell,
       windowsHide: true,
       env: { ...process.env, ...(this.opts.env ?? {}) },
+      ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
     })
     this.child = child
     // On Windows the shell wraps the real process in cmd.exe; `child.kill()`

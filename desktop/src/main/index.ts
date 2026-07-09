@@ -68,6 +68,10 @@ async function bootstrap(): Promise<void> {
     // packaged app, launch.env carries ELECTRON_RUN_AS_NODE.
     env: launch.env,
     requireCompatible: true,
+    // Neutral cwd: never let the proxy child inherit the app's own working
+    // directory (the install folder when launched from a shortcut), which
+    // would hold a CWD lock on it and break rebuilds/uninstalls.
+    cwd: app.getPath('userData'),
   })
   const client = new ProxyClient({ port, apiKey })
 

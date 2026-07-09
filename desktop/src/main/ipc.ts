@@ -237,8 +237,11 @@ export function registerIpc(deps: IpcDeps): () => void {
       }
       // A .cmd/.bat shim needs a shell; a real .exe is launched directly so a
       // failure surfaces as an error rather than being swallowed by the shell.
+      // cwd is set to the project explicitly — otherwise the editor inherits the
+      // APP's working directory (the packaged win-unpacked folder when launched
+      // from a shortcut) and holds a CWD lock on it, breaking every rebuild.
       const useShell = /\.(cmd|bat)$/i.test(exe)
-      const child = spawn(exe, [path], { shell: useShell, detached: true, stdio: 'ignore' })
+      const child = spawn(exe, [path], { shell: useShell, detached: true, stdio: 'ignore', cwd: path })
       child.on('error', () => { /* reported below via ok:false is not possible post-detach; logged */ })
       child.unref()
       return { ok: true, editor: exe }
