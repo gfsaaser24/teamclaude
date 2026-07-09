@@ -60,9 +60,63 @@ describe('Supervisor', () => {
     const port = await listen(server)
     cleanup.push(() => new Promise<void>(r => server.close(() => r())))
     const sup = new Supervisor({ command: process.execPath, args: ['-e', ''], port, apiKey: 'k', requireCompatible: true })
+    // An incompatible holder now arms a backoff retry timer (so it's eventually
+    // replaced if it exits); stop() must disarm it or vitest would hang.
+    cleanup.push(() => sup.stop())
     await sup.start()
     expect(sup.state).not.toBe('attached')
   })
+
+  it('restart path attaches to a compatible server instead of crash-looping', async () => {
+    const port = await freePort()
+    // `node -e ''` exits instantly. The death handler must route recovery
+    // through start() (which re-checks the port) rather than blindly re-spawn,
+    // otherwise this would crash-loop forever (EADDRINUSE in the real world).
+    const sup = new Supervisor({ command: process.execPath, args: ['-e', ''], port, apiKey: 'k' })
+    cleanup.push(() => sup.stop())
+    await sup.start()
+    await waitState(sup, 'crashed')
+    // An external compatible teamclaude now owns the port (answers 200 on every
+    // path, including /teamclaude/log). The scheduled retry must attach to it.
+    const server = createServer((_q, r) => {
+      r.writeHead(200, { 'Content-Type': 'application/json' }); r.end('{}')
+    })
+    await new Promise<void>(r => server.listen(port, '127.0.0.1', () => r()))
+    cleanup.push(() => new Promise<void>(r => server.close(() => r())))
+    await waitState(sup, 'attached', 8000)
+    expect(sup.state).toBe('attached')
+  }, 15000)
+
+  it('attached watchdog spawns own child when the external proxy dies', async () => {
+    const port = await freePort()
+    // External compatible proxy holds the port; the supervisor attaches to it.
+    const external = createServer((_q, r) => {
+      r.writeHead(200, { 'Content-Type': 'application/json' }); r.end('{}')
+    })
+    await new Promise<void>(r => external.listen(port, '127.0.0.1', () => r()))
+    let externalClosed = false
+    const closeExternal = (): Promise<void> => {
+      if (externalClosed) return Promise.resolve()
+      externalClosed = true
+      external.closeAllConnections()
+      return new Promise<void>(r => external.close(() => r()))
+    }
+    cleanup.push(closeExternal)
+    // Real spawn args so that once the watchdog fires start() on a freed port,
+    // it can bind the port with its own child and reach 'running'.
+    const script = fakeProxyScript()
+    const sup = new Supervisor({
+      command: process.execPath, args: [script, String(port)], port, apiKey: 'k', watchdogMs: 200,
+    })
+    cleanup.push(() => sup.stop())
+    await sup.start()
+    await waitState(sup, 'attached')
+    // External proxy dies → port frees → watchdog notices it's down → start()
+    // spawns our own child which binds the port.
+    await closeExternal()
+    await waitState(sup, 'running', 12000)
+    expect(sup.state).toBe('running')
+  }, 20000)
 
   it('spawns the child and reaches running, then stops cleanly', async () => {
     const port = await freePort()
