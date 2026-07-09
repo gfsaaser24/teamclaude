@@ -78,6 +78,9 @@ export class AccountManager {
       throttledAt: null,
     }));
     this.currentIndex = 0;
+    // Runtime-only manual pin (resets on restart): index of the account the user
+    // hand-picked as active, or null for full auto-rotation. See getActiveAccount.
+    this.manualIndex = null;
     this.switchThreshold = switchThreshold;
     this.setRoutes(routes);
     // When every account reads as over-quota we would otherwise refuse locally
@@ -102,6 +105,16 @@ export class AccountManager {
     // session reset made a sooner-expiring account the better choice. This runs
     // on every request so the behaviour holds without the TUI render loop.
     this.refreshExpiredQuotas();
+    // Manual pin: honor the user's hand-picked account whenever it can serve this
+    // request; fall through to auto-selection only when it's unavailable
+    // (rate-limited/exhausted for this model) or already tried this request.
+    if (this.manualIndex != null) {
+      const pinned = this.accounts[this.manualIndex];
+      if (pinned && this._isAvailable(pinned, model) && !exclude?.has(pinned.index)) {
+        this.currentIndex = this.manualIndex;
+        return pinned;
+      }
+    }
     const current = this.accounts[this.currentIndex];
     // `model` scopes availability: an account whose Fable weekly bucket is spent
     // is still fully usable for other models, so it is only excluded when THIS
@@ -150,6 +163,21 @@ export class AccountManager {
     }
     return account;
   }
+
+  /** Pin the active account by name or numeric index. Returns the pinned account name, or null if not found. */
+  setManualAccount(token) {
+    let idx = this.accounts.findIndex(a => a.name === token);
+    if (idx < 0 && /^\d+$/.test(String(token))) {
+      const n = Number(token);
+      if (n >= 0 && n < this.accounts.length) idx = n;
+    }
+    if (idx < 0) return null;
+    this.manualIndex = idx;
+    this.currentIndex = idx;
+    return this.accounts[idx].name;
+  }
+
+  clearManualAccount() { this.manualIndex = null; }
 
   _isProbeable(account) {
     if (!account) return false;
@@ -903,6 +931,10 @@ export class AccountManager {
     } else if (this.currentIndex > index) {
       this.currentIndex--;
     }
+    // Keep the manual pin pointing at the same account after the splice: drop it
+    // if the pinned account was the one removed, else shift it down past the gap.
+    if (this.manualIndex === index) this.manualIndex = null;
+    else if (this.manualIndex != null && this.manualIndex > index) this.manualIndex--;
   }
 
   /**
@@ -941,6 +973,7 @@ export class AccountManager {
   getStatus() {
     return {
       currentAccount: this.accounts[this.currentIndex]?.name,
+      manualAccount: this.manualIndex != null ? (this.accounts[this.manualIndex]?.name ?? null) : null,
       switchThreshold: this.switchThreshold,
       routes: this.getRoutes(),
       accounts: this.accounts.map(a => ({

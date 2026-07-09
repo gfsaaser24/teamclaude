@@ -300,6 +300,14 @@ async function serverCommand() {
 
   // Expose reload to the proxy's control endpoint (works with or without TUI).
   hooks.reload = reloadAccounts;
+  // Manual account pin: hand-pick the active account (null clears → full auto).
+  // Re-run selection so a cleared pin lands on the best auto choice immediately.
+  hooks.pinAccount = (token) => {
+    if (token == null) { accountManager.clearManualAccount(); }
+    else { accountManager.setManualAccount(token); }
+    accountManager.selectActiveAccount();
+    return accountManager.accounts[accountManager.currentIndex]?.name ?? null;
+  };
   hooks.handleEvents = (req, res) => hub.handleSSE(req, res);
   hooks.getRecentEvents = () => hub.recent();
 

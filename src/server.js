@@ -131,6 +131,24 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         return;
       }
 
+      // Manual account pin. POST /teamclaude/pin/<name-or-index> pins; POST
+      // /teamclaude/pin (no token) clears it. Local control only, like reload.
+      {
+        const m = req.method === 'POST' && (req.url || '').match(/^\/teamclaude\/pin(?:\/(.+))?$/);
+        if (m) {
+          if (!hooks.pinAccount) {
+            res.writeHead(501, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'pin not supported' }));
+            return;
+          }
+          const token = m[1] != null ? decodeURIComponent(m[1]) : null;
+          const active = hooks.pinAccount(token);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, active }));
+          return;
+        }
+      }
+
       return forward(req, res);
     } catch (err) {
       console.error('[TeamClaude] Unhandled error:', err);
