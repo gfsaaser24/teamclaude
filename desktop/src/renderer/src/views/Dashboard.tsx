@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
-import { RotateCw, Play, Square, RefreshCw } from 'lucide-react'
+import { RotateCw, Play, Square, RefreshCw, ChevronLeft, ChevronRight, Zap } from 'lucide-react'
 import { useTcStore } from '../store'
 import RadialMeter from '../components/RadialMeter'
 import type { TcAccountStatus } from '../types'
@@ -88,6 +88,22 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
   const dot = STATE_DOT[proxyState] ?? STATE_DOT.stopped
   const meta = `port ${status.server?.port ?? '—'} · up ${uptime}m · ${recentEnds.length} req`
 
+  // Manual pin/cycle: prev/next wraps the accounts array, seeded from the
+  // current pin (manualAccount) or, when auto-rotating, the live currentAccount.
+  const pinned = status.manualAccount != null
+  const cycle = async (dir: -1 | 1): Promise<void> => {
+    if (accounts.length === 0) return
+    const cur = accounts.findIndex(a => a.name === (status.manualAccount ?? status.currentAccount))
+    const base = cur >= 0 ? cur : 0
+    const next = (base + dir + accounts.length) % accounts.length
+    await window.tc.account.pin(accounts[next].name)
+    await refreshStatus()
+  }
+  const goAuto = async (): Promise<void> => {
+    await window.tc.account.pin(null)
+    await refreshStatus()
+  }
+
   return (
     <div className="space-y-3">
       {/* Active-account HUD — the one thing that must survive a 240px window.
@@ -106,6 +122,36 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
             <RefreshCw className={refreshing ? 'animate-spin' : ''} />
           </Button>
         </div>
+
+        {/* Manual pin / cycle — pick the active account by hand. Present in
+            compact mode too (cycling by hand matters most there). Own row +
+            flex-wrap so it never blows past a 240px window. */}
+        {accounts.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            <Button size="icon-xs" variant="ghost" className="shrink-0 text-muted-foreground"
+              aria-label="Pin previous account" title="Previous account"
+              onClick={() => void cycle(-1)}>
+              <ChevronLeft />
+            </Button>
+            <Button size="icon-xs" variant="ghost" className="shrink-0 text-muted-foreground"
+              aria-label="Pin next account" title="Next account"
+              onClick={() => void cycle(1)}>
+              <ChevronRight />
+            </Button>
+            {pinned ? (
+              <>
+                <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-[9px] font-medium">pinned</Badge>
+                <Button size="xs" variant="outline" className="shrink-0"
+                  aria-label="Return to auto-rotation" title="Return to auto-rotation"
+                  onClick={() => void goAuto()}>
+                  <Zap /> Auto
+                </Button>
+              </>
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">auto-rotating</span>
+            )}
+          </div>
+        )}
 
         <div className="mt-3 flex justify-center">
           {active

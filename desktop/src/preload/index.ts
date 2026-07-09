@@ -26,6 +26,9 @@ const tc = {
     oauthLogin: () => ipcRenderer.invoke('tc:api:oauthLogin'),
     onEvent: on('tc:event'),
   },
+  account: {
+    pin: (token: string | null) => ipcRenderer.invoke('tc:account:pin', token),
+  },
   install: {
     status: () => ipcRenderer.invoke('tc:install:status'),
     run: () => ipcRenderer.invoke('tc:install:run'),

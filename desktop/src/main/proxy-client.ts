@@ -67,6 +67,17 @@ export class ProxyClient {
   oauthLogin(): Promise<{ ok: boolean; error?: string }> { return this.postControl('/teamclaude/oauth/login') }
 
   /**
+   * Pin the active account (by name or index), or clear the pin with `null` to
+   * return to auto-rotation. Tolerant like reload/oauthLogin: a down proxy or a
+   * non-2xx/non-JSON body resolves to `{ ok: false }` instead of rejecting, so
+   * the IPC handler never throws and the UI can just re-read status.
+   */
+  pinAccount(token: string | null): Promise<{ ok: boolean; active?: string | null }> {
+    const path = token == null ? '/teamclaude/pin' : `/teamclaude/pin/${encodeURIComponent(token)}`
+    return this.json<{ ok: boolean; active?: string | null }>(path, { method: 'POST' }).catch(() => ({ ok: false }))
+  }
+
+  /**
    * Subscribe to /teamclaude/events. The hello frame's `recent` array is
    * replayed through onEvent one by one, then live events stream in.
    * Reconnects forever until the returned disconnect fn is called.

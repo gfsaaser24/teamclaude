@@ -127,6 +127,10 @@ export function registerIpc(deps: IpcDeps): () => void {
   ipcMain.handle('tc:api:recentEvents', () => client.recentEvents())
   ipcMain.handle('tc:api:reload', () => client.reload())
   ipcMain.handle('tc:api:oauthLogin', () => client.oauthLogin())
+  ipcMain.handle('tc:account:pin', async (_e, token: string | null) => {
+    const r = await client.pinAccount(token)
+    return r
+  })
 
   ipcMain.handle('tc:config:get', async () => {
     const cfg = await readTeamclaudeConfig()

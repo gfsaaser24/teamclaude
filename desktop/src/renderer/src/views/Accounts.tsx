@@ -4,16 +4,22 @@ import { Button } from '@renderer/components/ui/button'
 import { Switch } from '@renderer/components/ui/switch'
 import { Input } from '@renderer/components/ui/input'
 import { Badge } from '@renderer/components/ui/badge'
-import { Plus, Trash2, Loader2, RotateCw } from 'lucide-react'
+import { Plus, Trash2, Loader2, RotateCw, Pin, Zap } from 'lucide-react'
 import { useTcStore } from '../store'
 import type { TcEvent } from '../types'
 
 export default function Accounts(): React.JSX.Element {
-  const { config, status, events, refreshConfig } = useTcStore()
+  const { config, status, events, refreshConfig, refreshStatus } = useTcStore()
   const [loggingIn, setLoggingIn] = useState(false)
   const accounts = (config as { accounts?: { name: string; type: string; orgName?: string | null; priority?: number; disabled?: boolean }[] } | null)?.accounts ?? []
   // Live per-account health comes from the STORE status, not the redacted config. Cross-reference by name.
   const statusOf = (name: string): string | undefined => status?.accounts?.find(a => a.name === name)?.status
+  // The hand-pinned account (null = auto-rotation) comes from the live status too.
+  const pinnedName = status?.manualAccount ?? null
+  const pin = async (name: string | null): Promise<void> => {
+    await window.tc.account.pin(name)
+    await refreshStatus()
+  }
 
   const lastOauth = [...events].reverse().find((e: TcEvent) => e.type.startsWith('oauth-'))
   const oauthBusy = loggingIn && lastOauth?.type !== 'oauth-complete' && lastOauth?.type !== 'oauth-error'
@@ -50,6 +56,7 @@ export default function Accounts(): React.JSX.Element {
               <Badge variant="secondary" className="shrink-0">{a.type}</Badge>
               {a.orgName && <Badge variant="outline" className="min-w-0 shrink-0 max-w-[40%]"><span className="truncate" title={a.orgName}>{a.orgName}</span></Badge>}
               {broken && <Badge variant="destructive" className="shrink-0">Needs re-login</Badge>}
+              {pinnedName === a.name && <Badge className="shrink-0 gap-1"><Pin className="size-3" /> active — pinned</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
@@ -68,6 +75,19 @@ export default function Accounts(): React.JSX.Element {
                   onBlur={async e => { await window.tc.config.setAccountPriority(a.name, Number(e.target.value) || 0); await refreshConfig() }} />
               </label>
               <div className="ml-auto flex shrink-0 items-center gap-1">
+                {pinnedName === a.name ? (
+                  <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
+                    aria-label={`Return ${a.name} to auto-rotation`} title="Return to auto-rotation"
+                    onClick={() => void pin(null)}>
+                    <Zap className="size-3.5" /> Auto
+                  </Button>
+                ) : (
+                  <Button variant="secondary" size="sm" className="h-7 gap-1 px-2 text-xs"
+                    aria-label={`Use ${a.name}`} title={`Pin ${a.name} as the active account`}
+                    onClick={() => void pin(a.name)}>
+                    <Pin className="size-3.5" /> Use
+                  </Button>
+                )}
                 {(broken || a.type === 'oauth') && (
                   <Button variant={broken ? 'destructive' : 'ghost'} size="sm"
                     className="h-7 gap-1 px-2 text-xs" disabled={oauthBusy}

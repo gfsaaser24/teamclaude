@@ -14,6 +14,7 @@ export interface TcAccountStatus {
 }
 export interface TcStatus {
   currentAccount?: string
+  manualAccount?: string | null
   switchThreshold?: number
   routes?: { name: string; match: string[]; accounts?: string[]; bucket?: string }[]
   accounts?: TcAccountStatus[]
