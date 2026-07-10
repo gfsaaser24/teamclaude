@@ -7,6 +7,7 @@ import type { Supervisor } from './supervisor'
 import { ProxyClient, type TcEvent } from './proxy-client'
 import { readTeamclaudeConfig, updateTeamclaudeConfig, redactConfig, type TcRoute } from './teamclaude-config'
 import { isTeamclaudeInstalled, installTeamclaude } from './teamclaude-install'
+import { refreshTrayMenu } from './tray'
 
 export interface Project { path: string; name: string; autorun: string | null }
 export interface AppSettings {
@@ -234,7 +235,7 @@ export function registerIpc(deps: IpcDeps): () => void {
   ipcMain.handle('tc:window:setCompact', (_e, on: boolean) => deps.setCompact(on))
   ipcMain.handle('tc:window:hide', () => deps.getFlyout()?.hide())
 
-  ipcMain.handle('tc:dock:toggle', (_e, on: boolean) => deps.toggleDock(on))
+  ipcMain.handle('tc:dock:toggle', (_e, on: boolean) => { deps.toggleDock(on); refreshTrayMenu() })
   ipcMain.handle('tc:dock:setExpanded', (_e, on: boolean) => deps.setDockExpanded(on))
   ipcMain.handle('tc:dock:setOpacity', (_e, v: number) => deps.setDockOpacity(v))
   ipcMain.handle('tc:dock:isOpen', () => deps.isDockOpen())

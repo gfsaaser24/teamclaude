@@ -116,7 +116,16 @@ async function bootstrap(): Promise<void> {
   // Seed the stored opacity first so it's applied the moment the dock is created.
   setDockOpacity(settings.dockOpacity ?? DEFAULT_SETTINGS.dockOpacity ?? 1)
   if (settings.showDock) toggleDock(true)   // opt-in persistent edge dock (micro-HUD)
-  tray = createTray({ supervisor, onToggle: toggleFlyout, onQuit: () => app.quit() })
+  tray = createTray({
+    supervisor,
+    onToggle: toggleFlyout,
+    onQuit: () => app.quit(),
+    isDockShown: isDockOpen,
+    onToggleDock: on => {
+      toggleDock(on)
+      store.set('settings', { ...DEFAULT_SETTINGS, ...store.get('settings', DEFAULT_SETTINGS), showDock: on })
+    },
+  })
 
   void supervisor.start()
 

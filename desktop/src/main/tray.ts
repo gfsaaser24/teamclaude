@@ -12,7 +12,18 @@ function icon(state: SupervisorState): Electron.NativeImage {
   return nativeImage.createFromPath(join(__dirname, '../../resources', ICONS[state] ?? 'tray-down.png'))
 }
 
-export function createTray(opts: { supervisor: Supervisor; onToggle: () => void; onQuit: () => void }): Tray {
+// Lets other modules (e.g. the Settings IPC path) refresh the menu so the
+// dock checkbox never shows stale state.
+let refresh: (() => void) | null = null
+export function refreshTrayMenu(): void { refresh?.() }
+
+export function createTray(opts: {
+  supervisor: Supervisor
+  onToggle: () => void
+  onQuit: () => void
+  isDockShown: () => boolean
+  onToggleDock: (on: boolean) => void
+}): Tray {
   const { supervisor } = opts
   const tray = new Tray(icon(supervisor.state))
   tray.setToolTip('TeamClaude')
@@ -30,6 +41,12 @@ export function createTray(opts: { supervisor: Supervisor; onToggle: () => void;
       { label: 'Restart proxy', click: () => void supervisor.restart() },
       { type: 'separator' },
       {
+        label: 'Show edge dock (HUD)',
+        type: 'checkbox',
+        checked: opts.isDockShown(),
+        click: item => opts.onToggleDock(item.checked),
+      },
+      {
         label: 'Launch at login',
         type: 'checkbox',
         checked: app.getLoginItemSettings().openAtLogin,
@@ -40,6 +57,7 @@ export function createTray(opts: { supervisor: Supervisor; onToggle: () => void;
     ]))
   }
   supervisor.on('state', rebuild)
+  refresh = rebuild
   rebuild()
   tray.on('click', opts.onToggle)
   return tray
