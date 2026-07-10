@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog, BrowserWindow, shell } from 'electron'
 import { spawn, execSync, execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -103,7 +103,21 @@ export function registerIpc(deps: IpcDeps): () => void {
   const { supervisor, client, store } = deps
 
   supervisor.on('state', s => broadcast('tc:proxy-state', s))
-  const disconnectEvents = client.connectEvents((evt: TcEvent) => broadcast('tc:event', evt))
+  // The proxy tries to open the OAuth URL itself, but as a windowsHide child it
+  // cannot reliably surface a browser window — the login "did nothing". Open it
+  // from the app as well. lastOauthUrl guards against SSE reconnect replays
+  // re-opening the same flow; a rare duplicate tab beats an invisible login.
+  let lastOauthUrl = ''
+  const disconnectEvents = client.connectEvents((evt: TcEvent) => {
+    if (evt.type === 'oauth-url') {
+      const url = (evt as { url?: string }).url
+      if (url && url !== lastOauthUrl && url.startsWith('https://')) {
+        lastOauthUrl = url
+        void shell.openExternal(url)
+      }
+    }
+    broadcast('tc:event', evt)
+  })
 
   ipcMain.handle('tc:proxy:getState', async () => {
     const cfg = await readTeamclaudeConfig()
