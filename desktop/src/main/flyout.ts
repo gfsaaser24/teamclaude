@@ -9,13 +9,15 @@ const COMPACT_WIDTH = 300
 const COMPACT_HEIGHT = 360
 
 let flyout: BrowserWindow | null = null
-let pinned = false
 let userMoved = false   // once the user drags/resizes, stop snapping back to the edge
 let compact = false
 let prevBounds: { x: number; y: number; width: number; height: number } | null = null
 
 export function getFlyout(): BrowserWindow | null { return flyout }
-export function setPinned(v: boolean): void { pinned = v }
+// "Pin" = keep the window above other apps. On by default (HUD companion);
+// unpinned it stacks like a traditional window. (Hide-on-blur is gone, so
+// this is the pin button's whole meaning now.)
+export function setPinned(v: boolean): void { flyout?.setAlwaysOnTop(v) }
 
 /**
  * Shrink the flyout into a small always-on-top HUD (active account + meters) and
@@ -71,9 +73,8 @@ export function createFlyout(): BrowserWindow {
       sandbox: false,
     },
   })
-  // Minimizing fires blur on Windows — without the isMinimized() guard the
-  // window would hide itself and vanish from the taskbar instead of minimizing.
-  flyout.on('blur', () => { if (!pinned && !flyout?.isMinimized()) flyout?.hide() })
+  // No hide-on-blur: this is a real app window — alt-tabbing away must not
+  // close it. Hiding is explicit (X button, tray toggle, hotkey, minimize).
   flyout.on('moved', () => { userMoved = true })
   flyout.on('resized', () => { userMoved = true })
   flyout.webContents.on('render-process-gone', (_e, d) => {

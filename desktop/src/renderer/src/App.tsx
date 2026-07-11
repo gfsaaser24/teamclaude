@@ -49,7 +49,8 @@ function ViewFade({ children }: { children: React.ReactNode }): React.JSX.Elemen
 
 export default function App(): React.JSX.Element {
   const { proxyState, init } = useTcStore()
-  const [pinned, setPinnedState] = useState(false)
+  // Pin = always-on-top (the window itself starts on top, so default true).
+  const [pinned, setPinnedState] = useState(true)
   const [tabsCollapsed, setTabsCollapsed] = useState(false)
   const [compact, setCompactState] = useState(false)
   const [tab, setTab] = useState('dashboard')
@@ -103,7 +104,9 @@ export default function App(): React.JSX.Element {
             onClick={toggleCompact}>
             {compact ? <Maximize2 className="size-4" /> : <Minimize2 className="size-4" />}
           </Button>
-          <Button variant="ghost" size="icon-sm" aria-label="Pin panel"
+          <Button variant="ghost" size="icon-sm"
+            aria-label={pinned ? 'Stop keeping on top' : 'Keep on top'}
+            title={pinned ? 'On top of other windows — click to stack normally' : 'Keep on top of other windows'}
             className={pinned ? 'text-primary hover:text-primary' : 'text-muted-foreground hover:text-foreground'}
             onClick={() => { const next = !pinned; setPinnedState(next); void window.tc.window.setPinned(next) }}>
             {pinned ? <Pin className="size-4" /> : <PinOff className="size-4" />}
