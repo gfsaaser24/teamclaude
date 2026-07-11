@@ -2,14 +2,17 @@ import { useEffect, useState } from 'react'
 import { Switch } from '@renderer/components/ui/switch'
 import { FolderOpen } from 'lucide-react'
 
-const ACCENT = 'oklch(0.74 0.13 182)'
+// Clay — the app's identity accent, matching --primary. Hardcoded (not
+// var(--primary)) because `alpha()` below string-manipulates it for alpha
+// variants, which var() can't do inline.
+const ACCENT = 'oklch(0.672 0.131 38.756)'
 const alpha = (a: number): string => ACCENT.replace(')', ` / ${a})`)
 
 // Step 3 — routing. Two ways to point `claude` at the pool: the auto-route
 // toggle (a live Switch backed by proxy.setAutoRoute) or opening a project,
 // which drops a `teamclaude run` task. Illustrated with a mini terminal +
 // claude → proxy → accounts flow.
-export default function Route(): React.JSX.Element {
+export default function Route({ stepLabel }: { stepLabel: string }): React.JSX.Element {
   const [auto, setAuto] = useState(false)
 
   useEffect(() => {
@@ -31,7 +34,12 @@ export default function Route(): React.JSX.Element {
 
   return (
     <div className="flex flex-col px-1 py-3">
-      <h1 className="text-center text-lg font-semibold tracking-tight">Route your Claude through it.</h1>
+      <p className="text-center font-mono text-[10px] font-medium tracking-[0.12em] uppercase text-muted-foreground">
+        {stepLabel}
+      </p>
+      <h1 className="mt-1 text-center font-serif text-2xl font-normal tracking-tight">
+        Route your Claude through it.
+      </h1>
       <p className="mx-auto mt-1.5 max-w-[36ch] text-balance text-center text-xs leading-relaxed text-muted-foreground">
         TeamClaude runs a local proxy. Send <span className="font-mono">claude</span> through it and
         every request draws from your pooled accounts.
@@ -74,7 +82,7 @@ export default function Route(): React.JSX.Element {
 // Mini terminal window: the command, then claude → proxy → 3 account dots.
 function TerminalMock(): React.JSX.Element {
   return (
-    <div className="mx-auto mt-3 w-full max-w-[280px] overflow-hidden rounded-lg border border-border/70 bg-[oklch(0.16_0.006_286)] shadow-sm">
+    <div className="mx-auto mt-3 w-full max-w-[280px] overflow-hidden rounded-lg border border-border/70 bg-[oklch(0.14_0.004_84.586)] shadow-sm">
       <div className="flex items-center gap-1.5 border-b border-border/50 px-2.5 py-1.5">
         <span className="size-1.5 rounded-full bg-muted-foreground/30" />
         <span className="size-1.5 rounded-full bg-muted-foreground/30" />

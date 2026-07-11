@@ -2,16 +2,19 @@ import { Button } from '@renderer/components/ui/button'
 import { Loader2, ArrowRight } from 'lucide-react'
 import Logo from '@renderer/components/Logo'
 
-const ACCENT = 'oklch(0.74 0.13 182)'
+// Clay — the app's identity accent, matching --primary.
+const ACCENT = 'oklch(0.672 0.131 38.756)'
 
 // Step 4 — the payoff. Owns its own primary CTA (the container hides its footer
 // here) which persists onboarded + drops the user into the app.
 export default function Done({
   onFinish,
   finishing = false,
+  stepLabel,
 }: {
   onFinish: () => void
   finishing?: boolean
+  stepLabel: string
 }): React.JSX.Element {
   return (
     <div className="flex h-full flex-col items-center justify-center px-2 py-6 text-center">
@@ -24,7 +27,10 @@ export default function Done({
         <Logo size={104} animated />
       </div>
 
-      <h1 className="text-xl font-semibold tracking-tight">You&rsquo;re set.</h1>
+      <p className="font-mono text-[10px] font-medium tracking-[0.12em] uppercase text-muted-foreground">
+        {stepLabel}
+      </p>
+      <h1 className="mt-1 font-serif text-2xl font-normal tracking-tight">You&rsquo;re set.</h1>
       <p className="mt-2 max-w-[32ch] text-balance text-sm leading-relaxed text-muted-foreground">
         Your accounts are pooled and routing is live. Start a session — TeamClaude handles the
         hand-offs so you never watch a limit again.

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion } from 'motion/react'
 import { useTcStore } from './store'
 import RadialMeter from './components/RadialMeter'
 import type { TcAccountStatus, SupervisorState } from './types'
@@ -17,6 +18,13 @@ const STROKE = 4
 const RING = 32
 const RING_STROKE = 3
 
+// Springy one-shot entrance for the inner panel when collapsed↔expanded swaps
+// (keyed per-branch below so it remounts — and replays — on every toggle). The
+// OS window resize itself is driven separately and stays instant.
+const PANEL_SPRING = { type: 'spring' as const, stiffness: 380, damping: 28 }
+const PANEL_INITIAL = { opacity: 0, scale: 0.97 }
+const PANEL_ANIMATE = { opacity: 1, scale: 1 }
+
 /** Glass treatment for the proxy-live bar, keyed on supervisor state. All class
  *  strings are literal so Tailwind's JIT keeps them. */
 function liveStyle(state: SupervisorState): { bar: string; text: string; label: string; pulse: boolean } {
@@ -29,7 +37,7 @@ function liveStyle(state: SupervisorState): { bar: string; text: string; label: 
     case 'crashed':
       return { bar: 'bg-red-500/25 ring-red-400/40', text: 'text-red-300', label: 'ERR', pulse: false }
     default: // stopped
-      return { bar: 'bg-white/8 ring-white/15', text: 'text-muted-foreground', label: 'OFF', pulse: false }
+      return { bar: 'bg-foreground/8 ring-foreground/15', text: 'text-muted-foreground', label: 'OFF', pulse: false }
   }
 }
 
@@ -137,9 +145,13 @@ export default function Dock(): React.JSX.Element {
     const live = liveStyle(proxyState)
     return (
       <div className="flex h-screen w-screen items-stretch justify-end overflow-hidden bg-transparent">
-        <div
+        <motion.div
+          key="collapsed"
+          initial={PANEL_INITIAL}
+          animate={PANEL_ANIMATE}
+          transition={PANEL_SPRING}
           className="app-no-drag relative flex w-full flex-col overflow-hidden rounded-l-xl border border-r-0
-                     border-white/12 bg-neutral-950
+                     border-border bg-background
                      shadow-[0_2px_20px_-4px_rgba(0,0,0,0.65)]"
         >
           {/* left accent hairline */}
@@ -178,13 +190,13 @@ export default function Dock(): React.JSX.Element {
               className={`size-1.5 rounded-full transition-all duration-150 ${
                 flash
                   ? 'bg-emerald-400 shadow-[0_0_6px_2px_rgba(52,211,153,0.75)]'
-                  : 'bg-white/20'
+                  : 'bg-foreground/20'
               }`}
             />
           </div>
 
           {/* per-account stacked rings — scrolls vertically if there are many */}
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden border-t border-white/8 px-1 py-1.5">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden border-t border-border/70 px-1 py-1.5">
             {accounts.length === 0 ? (
               <p className="px-0.5 py-2 text-center text-[8px] leading-tight text-muted-foreground">
                 no accts
@@ -215,7 +227,7 @@ export default function Dock(): React.JSX.Element {
               </div>
             )}
           </div>
-        </div>
+        </motion.div>
       </div>
     )
   }
@@ -223,25 +235,29 @@ export default function Dock(): React.JSX.Element {
   // ── Expanded: a translucent glass panel listing accounts as index + meters.
   return (
     <div className="flex h-screen w-screen items-stretch justify-end overflow-hidden bg-transparent">
-      <div
-        className="flex w-full flex-col overflow-hidden rounded-l-xl border border-r-0 border-white/12
-                      bg-neutral-950 shadow-[0_2px_24px_-6px_rgba(0,0,0,0.7)]"
+      <motion.div
+        key="expanded"
+        initial={PANEL_INITIAL}
+        animate={PANEL_ANIMATE}
+        transition={PANEL_SPRING}
+        className="flex w-full flex-col overflow-hidden rounded-l-xl border border-r-0 border-border
+                      bg-background shadow-[0_2px_24px_-6px_rgba(0,0,0,0.7)]"
       >
         {/* header — collapse control + count */}
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-white/8 px-2 py-1.5">
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-border/70 px-2 py-1.5">
           <button
             type="button"
             onClick={() => toggle(false)}
             aria-label="Collapse dock"
             title="Collapse dock"
             className="app-no-drag flex size-5 items-center justify-center rounded-md text-foreground/70
-                       transition-colors hover:bg-white/10 hover:text-foreground"
+                       transition-colors hover:bg-foreground/10 hover:text-foreground"
           >
             <span aria-hidden className="text-[13px] leading-none">
               ›
             </span>
           </button>
-          <span className="min-w-0 flex-1 truncate text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+          <span className="min-w-0 flex-1 truncate font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">
             Dock
           </span>
           <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">
@@ -266,7 +282,7 @@ export default function Dock(): React.JSX.Element {
                     className={`flex items-center gap-1.5 rounded-lg px-1 py-1 transition-colors ${
                       active
                         ? 'bg-primary/12 ring-1 ring-inset ring-primary/35'
-                        : 'hover:bg-white/[0.04]'
+                        : 'hover:bg-foreground/[0.04]'
                     }`}
                   >
                     {/* index number — the account's identity at a glance */}
@@ -274,7 +290,7 @@ export default function Dock(): React.JSX.Element {
                       className={`flex size-5 shrink-0 items-center justify-center rounded-md text-[11px] font-bold tabular-nums ${
                         active
                           ? 'bg-primary text-primary-foreground shadow-sm'
-                          : 'bg-white/8 text-foreground/75'
+                          : 'bg-foreground/8 text-foreground/75'
                       }`}
                     >
                       {i + 1}
@@ -288,7 +304,7 @@ export default function Dock(): React.JSX.Element {
             </ul>
           )}
         </div>
-      </div>
+      </motion.div>
     </div>
   )
 }

@@ -1,10 +1,13 @@
 import Logo from '@renderer/components/Logo'
 
-const ACCENT = 'oklch(0.74 0.13 182)'
+// Clay — the app's identity accent, matching --primary. Hardcoded (not
+// var(--primary)) because sibling steps string-manipulate it for alpha
+// variants (see `alpha()` in Connect/Route), which var() can't do inline.
+const ACCENT = 'oklch(0.672 0.131 38.756)'
 
 // Step 1 — the hook. The animated ring/gauge mark is the illustration; the copy
 // sells the one job TeamClaude does with a little attitude.
-export default function Welcome(): React.JSX.Element {
+export default function Welcome({ stepLabel }: { stepLabel: string }): React.JSX.Element {
   return (
     <div className="flex flex-col items-center px-2 py-4 text-center">
       <div className="relative mt-2 mb-5">
@@ -16,7 +19,12 @@ export default function Welcome(): React.JSX.Element {
         <Logo size={116} animated />
       </div>
 
-      <h1 className="text-balance text-xl font-semibold tracking-tight">Never hit the wall again.</h1>
+      <p className="font-mono text-[10px] font-medium tracking-[0.12em] uppercase text-muted-foreground">
+        {stepLabel}
+      </p>
+      <h1 className="mt-1 text-balance font-serif text-2xl font-normal tracking-tight">
+        Never hit the wall again.
+      </h1>
       <p className="mt-2 max-w-[34ch] text-balance text-sm leading-relaxed text-muted-foreground">
         TeamClaude pools your Claude accounts and quietly rotates to a fresh one the second a limit
         hits — so your session just keeps going. No cooldown staring contest, no juggling logins.

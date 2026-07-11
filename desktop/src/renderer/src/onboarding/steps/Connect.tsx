@@ -4,7 +4,10 @@ import { Loader2, LogIn, Check, TriangleAlert, Lock } from 'lucide-react'
 import { useTcStore } from '@renderer/store'
 import type { TcEvent } from '@renderer/types'
 
-const ACCENT = 'oklch(0.74 0.13 182)'
+// Clay — the app's identity accent, matching --primary. Hardcoded (not
+// var(--primary)) because `alpha()` below string-manipulates it for alpha
+// variants, which var() can't do inline.
+const ACCENT = 'oklch(0.672 0.131 38.756)'
 const alpha = (a: number): string => ACCENT.replace(')', ` / ${a})`)
 
 type Phase = 'idle' | 'starting' | 'browser' | 'complete' | 'error'
@@ -14,7 +17,13 @@ type Phase = 'idle' | 'starting' | 'browser' | 'complete' | 'error'
 // error). Only events emitted AFTER the button click count, so a replayed
 // oauth-complete from a prior session can't fake success. The account count is
 // read reactively from the store; the container unlocks Next at >= 1.
-export default function Connect({ accountCount }: { accountCount: number }): React.JSX.Element {
+export default function Connect({
+  accountCount,
+  stepLabel,
+}: {
+  accountCount: number
+  stepLabel: string
+}): React.JSX.Element {
   const events = useTcStore((s) => s.events)
   const [startId, setStartId] = useState<number | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -54,7 +63,10 @@ export default function Connect({ accountCount }: { accountCount: number }): Rea
 
   return (
     <div className="flex flex-col items-center px-1 py-3 text-center">
-      <h1 className="text-lg font-semibold tracking-tight">Connect an account.</h1>
+      <p className="font-mono text-[10px] font-medium tracking-[0.12em] uppercase text-muted-foreground">
+        {stepLabel}
+      </p>
+      <h1 className="mt-1 font-serif text-2xl font-normal tracking-tight">Connect an account.</h1>
       <p className="mt-1.5 max-w-[34ch] text-balance text-xs leading-relaxed text-muted-foreground">
         Sign in with your real Claude account. Add as many as you like — TeamClaude rotates between
         them. This runs the same login you already trust.
@@ -115,7 +127,7 @@ function BrowserMock(): React.JSX.Element {
         </div>
         <div
           className="mt-1 flex items-center justify-center rounded-md py-1.5 text-[10px] font-semibold"
-          style={{ background: ACCENT, color: 'oklch(0.2 0.03 182)' }}
+          style={{ background: ACCENT, color: 'oklch(0.191 0.002 106.586)' /* --primary-foreground, #141413 */ }}
         >
           Authorize TeamClaude
         </div>

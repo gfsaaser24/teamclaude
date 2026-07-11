@@ -27,6 +27,9 @@ export default function Onboarding({ onDone }: { onDone: () => void }): React.JS
   const accountCount = config?.accounts?.length ?? 0
   const isLast = step === TOTAL - 1
   const canNext = step === 1 ? accountCount >= 1 : true
+  // Mono eyebrow each step renders above its own heading — "STEP N / 4" once
+  // the uppercase transform hits it.
+  const stepLabel = `Step ${step + 1} / ${TOTAL}`
 
   const finish = async (): Promise<void> => {
     setFinishing(true)
@@ -42,14 +45,14 @@ export default function Onboarding({ onDone }: { onDone: () => void }): React.JS
   const next = (): void => setStep((s) => Math.min(TOTAL - 1, s + 1))
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Ambient teal wash bleeding down from the top edge. */}
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      {/* Ambient clay wash bleeding down from the top edge — identity, not status. */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-44"
         style={{
           background:
-            'radial-gradient(70% 90% at 50% -10%, oklch(0.74 0.13 182 / 0.16), transparent 70%)',
+            'radial-gradient(70% 90% at 50% -10%, oklch(0.672 0.131 38.756 / 0.16), transparent 70%)',
         }}
       />
 
@@ -68,12 +71,11 @@ export default function Onboarding({ onDone }: { onDone: () => void }): React.JS
               key={i}
               className={`h-1.5 rounded-full transition-all duration-300 ${
                 i === step
-                  ? 'w-5'
+                  ? 'w-5 bg-primary'
                   : i < step
-                    ? 'w-1.5 opacity-70'
+                    ? 'w-1.5 bg-primary opacity-70'
                     : 'w-1.5 bg-muted-foreground/30'
               }`}
-              style={i <= step ? { background: 'oklch(0.74 0.13 182)' } : undefined}
             />
           ))}
         </div>
@@ -89,16 +91,18 @@ export default function Onboarding({ onDone }: { onDone: () => void }): React.JS
 
       {/* Active step */}
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-2">
-        {step === 0 && <Welcome />}
-        {step === 1 && <Connect accountCount={accountCount} />}
-        {step === 2 && <Route />}
-        {step === 3 && <Done onFinish={() => void finish()} finishing={finishing} />}
+        {step === 0 && <Welcome stepLabel={stepLabel} />}
+        {step === 1 && <Connect accountCount={accountCount} stepLabel={stepLabel} />}
+        {step === 2 && <Route stepLabel={stepLabel} />}
+        {step === 3 && (
+          <Done onFinish={() => void finish()} finishing={finishing} stepLabel={stepLabel} />
+        )}
       </div>
 
       {/* Nav — Done owns its own primary CTA, so the footer hides on the last step. */}
       {!isLast && (
         <div className="relative flex shrink-0 items-center gap-2 border-t border-border/60 px-4 py-3">
-          <Button variant="ghost" size="sm" disabled={step === 0} onClick={back}>
+          <Button variant="outline" size="sm" disabled={step === 0} onClick={back}>
             <ChevronLeft /> Back
           </Button>
           <div className="flex-1" />
