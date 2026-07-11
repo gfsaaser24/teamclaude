@@ -34,8 +34,11 @@ export default function Accounts(): React.JSX.Element {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium">{accounts.length} account(s)</h2>
+      <div className="flex items-center justify-between gap-2">
+        <div className="space-y-0.5">
+          <div className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Accounts</div>
+          <h2 className="font-serif text-lg font-normal tracking-tight">{accounts.length} account(s)</h2>
+        </div>
         <Button size="sm" onClick={() => void startLogin()} disabled={oauthBusy}>
           {oauthBusy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Add account
         </Button>
@@ -46,15 +49,31 @@ export default function Accounts(): React.JSX.Element {
       {oauthBusy && (
         <p className="text-xs text-muted-foreground">Complete the login in your browser…</p>
       )}
-      {accounts.map(a => {
+      {accounts.length === 0 && (
+        <div className="space-y-1 rounded-2xl border border-dashed border-border px-4 py-8 text-center">
+          <p className="font-serif text-sm font-normal tracking-tight">No accounts yet.</p>
+          <p className="font-mono text-[10px] tracking-[0.08em] uppercase text-muted-foreground">Add an account to start routing requests</p>
+        </div>
+      )}
+      {accounts.map((a, i) => {
         const broken = statusOf(a.name) === 'error'
+        const active = a.name === status?.currentAccount
         return (
-        <Card key={a.name} className={broken ? 'border-destructive/50' : ''}>
+        <Card
+          key={a.name}
+          className={`transition-colors hover:bg-white/[0.03] ${broken ? 'border-destructive/50' : active ? 'border-primary/40 ring-1 ring-primary/25' : ''} ${a.disabled ? 'opacity-50' : ''}`}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
-              <span className="truncate" title={a.name}>{a.name}</span>
+              <span
+                className={`flex size-5 shrink-0 items-center justify-center rounded-md font-mono text-[10px] font-medium tabular-nums ${active ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}
+              >
+                {i + 1}
+              </span>
+              <span className="min-w-0 truncate font-serif text-sm font-normal tracking-tight" title={a.name}>{a.name}</span>
               <Badge variant="secondary" className="shrink-0">{a.type}</Badge>
               {a.orgName && <Badge variant="outline" className="min-w-0 shrink-0 max-w-[40%]"><span className="truncate" title={a.orgName}>{a.orgName}</span></Badge>}
+              {a.disabled && <Badge variant="outline" className="h-5 shrink-0 px-1.5 font-mono text-[9px] font-medium tracking-[0.1em] uppercase">disabled</Badge>}
               {broken && <Badge variant="destructive" className="shrink-0">Needs re-login</Badge>}
               {pinnedName === a.name && <Badge className="shrink-0 gap-1"><Pin className="size-3" /> active — pinned</Badge>}
             </CardTitle>

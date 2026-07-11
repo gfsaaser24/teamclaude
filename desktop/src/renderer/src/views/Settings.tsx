@@ -46,7 +46,7 @@ function ConnectCard({ info }: { info: ProxyInfo }): React.JSX.Element {
   )
   return (
     <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-sm">Connect your Claude</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Connect your Claude</CardTitle></CardHeader>
       <CardContent className="space-y-2">
         <p className="text-[11px] text-muted-foreground">This app runs its own proxy at:</p>
         <Row text={info.url} k="url" />
@@ -92,7 +92,7 @@ function SxCard(): React.JSX.Element {
 
   return (
     <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-sm">sx.org proxy</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">sx.org proxy</CardTitle></CardHeader>
       <CardContent className="space-y-3">
         <p className="text-[11px] text-muted-foreground">Routes upstream through sx.org to dodge IP-based 429s. Optional.</p>
         <div className="space-y-1">
@@ -143,11 +143,14 @@ export default function Settings(): React.JSX.Element {
     <div className="space-y-3">
       {info && <ConnectCard info={info} />}
       {!s ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="space-y-1 py-2">
+          <p className="font-serif text-sm font-normal tracking-tight text-muted-foreground">Loading…</p>
+          <p className="font-mono text-[10px] tracking-[0.08em] uppercase text-muted-foreground">Fetching your settings</p>
+        </div>
       ) : (
         <>
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">App</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">App</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               {field(s, 'Editor command (Trae CLI)', 'editorCommand')}
               {field(s, 'Toggle hotkey (Electron accelerator)', 'hotkey')}
@@ -208,7 +211,7 @@ export default function Settings(): React.JSX.Element {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">Proxy process</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Proxy process</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               {field(s, 'teamclaude command', 'teamclaudeCommand')}
               <div className="space-y-1">

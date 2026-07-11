@@ -84,11 +84,11 @@ export default function Routing(): React.JSX.Element {
         <Card>
           <CardContent className="space-y-2 py-6 text-center">
             <RouteIcon className="mx-auto size-6 text-muted-foreground" />
-            <p className="text-sm font-medium">No routes yet</p>
+            <p className="font-serif text-sm font-normal tracking-tight">No routes yet.</p>
+            <p className="font-mono text-[10px] tracking-[0.08em] uppercase text-muted-foreground">Every model rotates across all accounts</p>
             <p className="mx-auto max-w-[46ch] text-xs text-muted-foreground">
-              Right now every model rotates across all your accounts. Add a route to pin a model
-              to specific accounts — e.g. send <span className="font-mono">Opus</span> only to your Max accounts
-              so it never spends your API key.
+              Add a route to pin a model to specific accounts — e.g. send <span className="font-mono">Opus</span> only
+              to your Max accounts so it never spends your API key.
             </p>
             <Button size="sm" className="mt-1" onClick={addRoute}><Plus className="size-4" /> Add your first route</Button>
           </CardContent>
@@ -157,7 +157,7 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
 
         {/* Models */}
         <div className="space-y-1.5">
-          <Label className="text-xs">Models</Label>
+          <Label className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Models</Label>
           {route.match.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {route.match.map(m => (
@@ -205,7 +205,7 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
 
         {/* Accounts */}
         <div className="space-y-1.5">
-          <Label className="text-xs">Accounts</Label>
+          <Label className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Accounts</Label>
           {accounts.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">No accounts loaded — start the proxy to pick accounts.</p>
           ) : (
@@ -217,7 +217,7 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
                     key={a.name}
                     size="sm"
                     variant={on ? 'default' : 'outline'}
-                    className="h-7 max-w-full px-2 text-[11px]"
+                    className="h-7 max-w-full px-2 font-mono text-[11px]"
                     title={`${a.name}${a.org ? ` (${a.org})` : ''} · ${a.type}`}
                     onClick={() => toggleAccount(a.name)}
                   >
@@ -239,7 +239,7 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
           </button>
           {advanced && (
             <div className="space-y-1 pt-1.5">
-              <Label className="text-xs">Quota bucket (optional)</Label>
+              <Label className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Quota bucket (optional)</Label>
               <Input value={route.bucket ?? ''} placeholder="leave empty unless you know you need it" className="h-7 text-[11px]"
                 onChange={e => onChange({ bucket: e.target.value })} />
               <p className="text-[11px] text-muted-foreground">Overrides which quota window this route counts against. Most setups leave this blank.</p>

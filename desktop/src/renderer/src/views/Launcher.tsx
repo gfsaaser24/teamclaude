@@ -132,7 +132,7 @@ export default function Launcher(): React.JSX.Element {
       </Card>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm">Claude launch options</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Claude launch options</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           {BOOL_FLAGS.map(b => (
             <div key={b.flag} className="flex items-center justify-between gap-2">
@@ -166,12 +166,12 @@ export default function Launcher(): React.JSX.Element {
 
       {error && <p className="text-xs text-destructive">{error}</p>}
       {projects.map(p => (
-        <Card key={p.path}>
+        <Card key={p.path} className="group transition-colors hover:border-primary/30 hover:bg-primary/[0.03]">
           <CardContent className="flex items-center gap-2">
-            <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+            <FolderOpen className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium">{p.name}</div>
-              <div className="truncate text-xs text-muted-foreground">{p.path}{p.autorun ? ` · runs ${p.autorun}` : ''}</div>
+              <div className="truncate font-serif text-sm font-normal tracking-tight">{p.name}</div>
+              <div className="truncate font-mono text-[11px] text-muted-foreground">{p.path}{p.autorun ? ` · runs ${p.autorun}` : ''}</div>
             </div>
             <Button size="sm" className="ml-auto shrink-0" onClick={() => void open(p.path)}>
               <ExternalLink className="size-4" /> Open
@@ -183,7 +183,12 @@ export default function Launcher(): React.JSX.Element {
           </CardContent>
         </Card>
       ))}
-      {projects.length === 0 && <p className="text-sm text-muted-foreground">No projects yet — add a folder to launch it in your editor.</p>}
+      {projects.length === 0 && (
+        <div className="space-y-1 rounded-2xl border border-dashed border-border px-4 py-8 text-center">
+          <p className="font-serif text-sm font-normal tracking-tight">No projects yet.</p>
+          <p className="font-mono text-[10px] tracking-[0.08em] uppercase text-muted-foreground">Add a folder to launch it in your editor</p>
+        </div>
+      )}
     </div>
   )
 }

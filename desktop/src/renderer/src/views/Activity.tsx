@@ -35,15 +35,23 @@ export default function Activity(): React.JSX.Element {
   return (
     <div className="space-y-2">
       <Input placeholder="Filter by path, model, account, status…" value={filter} onChange={e => setFilter(e.target.value)} className="h-8" />
-      {rows.length === 0 && <p className="text-sm text-muted-foreground">No requests yet.</p>}
+      {rows.length === 0 && (
+        <div className="space-y-1 rounded-2xl border border-dashed border-border px-4 py-8 text-center">
+          <p className="font-serif text-sm font-normal tracking-tight">No requests yet.</p>
+          <p className="font-mono text-[10px] tracking-[0.08em] uppercase text-muted-foreground">Traffic appears here once the proxy handles a request</p>
+        </div>
+      )}
       <ul className="space-y-1">
         {rows.slice(0, 100).map(r => (
-          <li key={r.reqId} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs">
-            {!r.done ? <Badge variant="outline" className="shrink-0 animate-pulse">···</Badge>
-              : <Badge variant={r.status && r.status < 400 ? 'secondary' : 'destructive'} className="shrink-0">{r.status ?? '?'}</Badge>}
-            <span className="min-w-0 flex-1 truncate font-mono" title={r.model ?? r.path ?? undefined}>{r.model ?? r.path ?? '—'}</span>
+          <li
+            key={r.reqId}
+            className="flex items-center gap-2 rounded-md border border-l-transparent px-2 py-1.5 font-mono text-[11px] transition-colors hover:border-l-primary hover:bg-white/[0.03]"
+          >
+            {!r.done ? <Badge variant="outline" className="shrink-0 animate-pulse font-mono">···</Badge>
+              : <Badge variant={r.status && r.status < 400 ? 'secondary' : 'destructive'} className="shrink-0 font-mono">{r.status ?? '?'}</Badge>}
+            <span className="min-w-0 flex-1 truncate" title={r.model ?? r.path ?? undefined}>{r.model ?? r.path ?? '—'}</span>
             <span className="ml-auto max-w-[35%] shrink-0 truncate text-muted-foreground" title={r.account ?? undefined}>{r.account ?? ''}</span>
-            <span className="shrink-0 text-muted-foreground">{new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+            <span className="shrink-0 text-muted-foreground/70">{new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           </li>
         ))}
       </ul>
