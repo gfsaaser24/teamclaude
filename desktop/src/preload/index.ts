@@ -57,6 +57,7 @@ const tc = {
     setPinned: (pinned: boolean) => ipcRenderer.invoke('tc:window:setPinned', pinned),
     setCompact: (on: boolean) => ipcRenderer.invoke('tc:window:setCompact', on),
     hide: () => ipcRenderer.invoke('tc:window:hide'),
+    minimize: () => ipcRenderer.invoke('tc:window:minimize'),
   },
   dock: {
     toggle: (on: boolean) => ipcRenderer.invoke('tc:dock:toggle', on),

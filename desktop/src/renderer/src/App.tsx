@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@renderer/components/ui/tabs'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
-import { Pin, PinOff, X, ChevronUp, ChevronDown, Minimize2, Maximize2 } from 'lucide-react'
+import { Pin, PinOff, X, ChevronUp, ChevronDown, Minimize2, Maximize2, Minus } from 'lucide-react'
 import { useTcStore } from './store'
 import Logo from './components/Logo'
 import Onboarding from './onboarding/Onboarding'
@@ -61,6 +61,10 @@ export default function App(): React.JSX.Element {
             title={tabsCollapsed ? 'Show tabs' : 'Hide tabs'}
             onClick={() => setTabsCollapsed(v => !v)}>
             {tabsCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+          </Button>
+          <Button variant="ghost" size="icon-sm" aria-label="Minimize to taskbar"
+            title="Minimize to taskbar" onClick={() => void window.tc.window.minimize()}>
+            <Minus className="size-4" />
           </Button>
           <Button variant="ghost" size="icon-sm"
             aria-label={compact ? 'Exit compact mode' : 'Compact HUD mode'}

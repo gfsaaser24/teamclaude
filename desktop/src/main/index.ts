@@ -9,7 +9,7 @@ import { ProxyClient } from './proxy-client'
 import { getTeamclaudeConfigPath, readTeamclaudeConfig } from './teamclaude-config'
 import { registerIpc, applyAutoRoute, DEFAULT_SETTINGS, type AppSettings, type Project } from './ipc'
 import { isTeamclaudeInstalled, preferredProxyLaunch } from './teamclaude-install'
-import { createFlyout, toggleFlyout, getFlyout, setPinned, setCompact } from './flyout'
+import { createFlyout, toggleFlyout, getFlyout, setPinned, setCompact, minimizeFlyout } from './flyout'
 import { toggleDock, setDockExpanded, setDockOpacity, isDockOpen, destroyDock } from './dock'
 import { createTray } from './tray'
 
@@ -106,7 +106,7 @@ async function bootstrap(): Promise<void> {
   }
   applySettings(settings)
 
-  registerIpc({ supervisor, client, store, getFlyout, setPinned, setCompact, toggleDock, setDockExpanded, setDockOpacity, isDockOpen, applySettings, proxyInfo })
+  registerIpc({ supervisor, client, store, getFlyout, setPinned, setCompact, minimizeFlyout, toggleDock, setDockExpanded, setDockOpacity, isDockOpen, applySettings, proxyInfo })
 
   // If the user turned on auto-route, re-assert it on launch (the port is
   // stable, but this keeps the env var correct if it ever changed).

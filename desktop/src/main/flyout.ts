@@ -60,7 +60,7 @@ export function createFlyout(): BrowserWindow {
     resizable: true,
     minWidth: 240,
     movable: true,
-    skipTaskbar: true,
+    skipTaskbar: false,
     alwaysOnTop: true,
     backgroundMaterial: 'acrylic',   // Win11 flyout look; harmless elsewhere
     webPreferences: {
@@ -70,7 +70,9 @@ export function createFlyout(): BrowserWindow {
       sandbox: false,
     },
   })
-  flyout.on('blur', () => { if (!pinned) flyout?.hide() })
+  // Minimizing fires blur on Windows — without the isMinimized() guard the
+  // window would hide itself and vanish from the taskbar instead of minimizing.
+  flyout.on('blur', () => { if (!pinned && !flyout?.isMinimized()) flyout?.hide() })
   flyout.on('moved', () => { userMoved = true })
   flyout.on('resized', () => { userMoved = true })
   flyout.webContents.setWindowOpenHandler(({ url }) => {
@@ -87,6 +89,7 @@ export function createFlyout(): BrowserWindow {
 
 export function toggleFlyout(): void {
   if (!flyout) return
+  if (flyout.isMinimized()) { flyout.restore(); flyout.focus(); return }
   if (flyout.isVisible()) { flyout.hide(); return }
   // Anchor to the right edge only until the user has moved/resized it; after
   // that we respect their chosen position instead of snapping it back.
@@ -102,3 +105,5 @@ export function toggleFlyout(): void {
   flyout.show()
   flyout.focus()
 }
+
+export function minimizeFlyout(): void { flyout?.minimize() }
