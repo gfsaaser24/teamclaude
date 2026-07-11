@@ -82,7 +82,9 @@ export default function Accounts(): React.JSX.Element {
             {broken && (
               <p className="text-xs text-muted-foreground">Log in as this account in the browser to restore it.</p>
             )}
-            <div className="flex items-center gap-3">
+            {/* Controls wrap when the window is narrow — every child is shrink-0,
+                so without wrapping the action cluster overflows the card. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <label className="flex shrink-0 items-center gap-2 text-xs">
                 <Switch checked={!a.disabled}
                   onCheckedChange={async v => { await window.tc.config.setAccountDisabled(a.name, !v); await refreshConfig() }} />
@@ -115,7 +117,7 @@ export default function Accounts(): React.JSX.Element {
                     {oauthBusy ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCw className="size-3.5" />} Re-login
                   </Button>
                 )}
-                <Button variant="ghost" size="icon" className="shrink-0 text-destructive" aria-label={`Remove ${a.name}`}
+                <Button variant="ghost" size="icon-sm" className="size-7 shrink-0 text-destructive" aria-label={`Remove ${a.name}`}
                   onClick={async () => {
                     if (!window.confirm(`Remove account "${a.name}"? The proxy will restart.`)) return
                     await window.tc.config.removeAccount(a.name)
