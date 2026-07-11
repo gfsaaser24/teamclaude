@@ -5,6 +5,10 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  # Never pack previous build outputs into the app: electron-builder only
+  # auto-excludes the CONFIGURED output dir, so building into dist/rN would
+  # otherwise swallow every older dist/* (this once produced a 1.5 GB asar).
+  - '!dist'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'

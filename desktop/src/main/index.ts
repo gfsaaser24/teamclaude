@@ -26,6 +26,12 @@ function resolveProxyEntry(): string {
   return candidates.find(c => existsSync(c)) ?? candidates[0]
 }
 
+// Dev instances get their own userData so they don't share the installed
+// app's single-instance lock (or its settings): `npm run dev` runs BESIDE the
+// packaged app and its supervisor simply attaches to the already-running
+// proxy. Must happen before anything touches userData (Store, the lock).
+if (!app.isPackaged) app.setPath('userData', join(app.getPath('appData'), 'TeamClaude-Dev'))
+
 if (!app.requestSingleInstanceLock()) app.quit()
 
 // One-time migration: the app was originally misnamed "desktop" (the generic
