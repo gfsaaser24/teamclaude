@@ -14,7 +14,10 @@ function Progress({
     <ProgressPrimitive.Root
       data-slot="progress"
       className={cn(
-        "relative h-2 w-full overflow-hidden rounded-full bg-primary/20",
+        // Neutral track, not primary-tinted: the sole consumer today is
+        // QuotaBar, whose semantic meter colors must not inherit the clay
+        // --primary (clay = identity, never a meter state).
+        "relative h-2 w-full overflow-hidden rounded-full bg-secondary",
         className
       )}
       {...props}

@@ -16,7 +16,12 @@ export default function QuotaBar({ label, ratio, resetMs }: {
         <span className="truncate" title={label}>{label}</span>
         <span className="shrink-0">{pct}%{resets ? ` · resets ${resets}` : ''}</span>
       </div>
-      <Progress value={pct} className={pct >= 98 ? '[&>div]:bg-destructive' : pct >= 80 ? '[&>div]:bg-amber-500' : ''} />
+      {/* Meter colors are semantic — teal OK / amber ≥80% / red ≥98% — and must
+          stay decoupled from --primary: clay is the app's identity color, never
+          a meter state. The <80% teal is explicit (it matches RadialMeter's OK
+          constant) rather than falling through to Progress's default fill,
+          which is bg-primary and now renders clay. */}
+      <Progress value={pct} className={pct >= 98 ? '[&>div]:bg-destructive' : pct >= 80 ? '[&>div]:bg-amber-500' : '[&>div]:bg-[oklch(0.74_0.13_182)]'} />
     </div>
   )
 }

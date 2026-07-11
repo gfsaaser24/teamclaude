@@ -2,10 +2,12 @@
 // is a single stroked circle whose visible sweep is driven by stroke-dashoffset,
 // so it stays crisp at 40px and animates smoothly when the ratio changes.
 //
-// Utilization colours match the CLI/QuotaBar thresholds: a confident teal until
-// 80%, amber from 80%, destructive red from 98%. Colours are explicit oklch so
-// the gauge reads the same on the app's hard-dark chrome regardless of --primary
-// (which is near-white in dark mode).
+// Utilization thresholds match the CLI and QuotaBar: a confident teal until
+// 80%, amber from 80%, destructive red from 98% (QuotaBar reuses this exact
+// teal for its <80% fill; its amber/red use the near-equivalent amber-500 and
+// --destructive tokens). Colours are explicit oklch so the gauge stays
+// semantic on the app's hard-dark chrome regardless of --primary — clay is
+// the identity colour (active/CTA/focus) and must never read as a meter state.
 
 const OK = 'oklch(0.74 0.13 182)' // teal — normal
 const WARN = 'oklch(0.80 0.15 78)' // amber — ≥ 80%
