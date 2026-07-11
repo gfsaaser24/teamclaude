@@ -87,6 +87,11 @@ export function createDock(): BrowserWindow {
     const now = Date.now()
     if (!shouldRecreate(recreateTimestamps, now)) {
       logLine('dock', 'dock renderer crash loop — giving up')
+      // Tear the corpse down too: otherwise isDockOpen() stays true for a dead
+      // window and createDock() early-returns it, so the tray's "show dock"
+      // silently no-ops. Timestamps are NOT reset — a user-initiated recreate
+      // is still subject to the budget until the 60s window slides.
+      destroyDock()
       return
     }
     recreateTimestamps.push(now)
