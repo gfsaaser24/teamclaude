@@ -19,6 +19,7 @@
     "hooks": "@renderer/hooks"
   },
   "registries": {
+    "@cult-ui": "https://cult-ui.com/r/{name}.json",
     "@ss-components": {
       "url": "https://shadcnstudio.com/r/components/{style}/{name}.json",
       "params": { "email": "${EMAIL}", "license_key": "${LICENSE_KEY}" }
