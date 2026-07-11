@@ -129,6 +129,12 @@ async function bootstrap(): Promise<void> {
 
   void supervisor.start()
 
+  // GPU/utility process deaths don't take the app down but leave no trace
+  // otherwise — the renderer just silently stops updating.
+  app.on('child-process-gone', (_e, details) => {
+    logLine('app', `child-process-gone type=${details.type} reason=${details.reason} exitCode=${details.exitCode} name=${details.name ?? ''}`)
+  })
+
   app.on('second-instance', toggleFlyout)
   app.on('before-quit', event => {
     // Own the child's lifetime: stop it on quit — unless we merely attached to

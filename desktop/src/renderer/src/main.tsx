@@ -4,6 +4,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import Dock from './Dock'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // One renderer bundle, two windows. `?view=dock` selects the edge micro-HUD; the
 // default is the full flyout app. The dock window is OS-transparent, so strip the
@@ -16,5 +17,15 @@ if (isDock) {
 }
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>{isDock ? <Dock /> : <App />}</StrictMode>
+  <StrictMode>
+    {isDock ? (
+      <ErrorBoundary name="dock">
+        <Dock />
+      </ErrorBoundary>
+    ) : (
+      <ErrorBoundary name="app">
+        <App />
+      </ErrorBoundary>
+    )}
+  </StrictMode>
 )

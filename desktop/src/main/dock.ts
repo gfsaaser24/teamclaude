@@ -1,6 +1,8 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
+import { logLine } from './log'
+import { shouldRecreate } from './crash-backoff'
 
 // A persistent, semi-transparent micro-HUD pinned to the right screen edge. It
 // is a SEPARATE window from the flyout: always-on-top, never hidden on blur, and
@@ -15,6 +17,13 @@ let dock: BrowserWindow | null = null
 // Last-applied window opacity, re-asserted whenever the dock is (re)created so a
 // destroy/recreate (toggle off/on) doesn't reset the user's transparency choice.
 let dockOpacity = 1
+// Recreation timestamps for the crash backoff (see crash-backoff.ts) — the
+// dock owns this array; the policy itself is stateless.
+const recreateTimestamps: number[] = []
+// Set for the duration of a deliberate destroyDock() call so a render-process-gone
+// that fires as a side effect of tearing the window down isn't mistaken for a
+// crash and doesn't trigger a recreate.
+let intentionalTeardown = false
 
 export function isDockOpen(): boolean {
   return dock !== null && !dock.isDestroyed()
@@ -31,7 +40,7 @@ function boundsFor(width: number): { x: number; y: number; width: number; height
 
 export function createDock(): BrowserWindow {
   if (dock && !dock.isDestroyed()) return dock
-  dock = new BrowserWindow({
+  const win = new BrowserWindow({
     ...boundsFor(COLLAPSED),
     show: false,
     frame: false,
@@ -51,26 +60,50 @@ export function createDock(): BrowserWindow {
       sandbox: false
     }
   })
+  dock = win
   // Float above ordinary always-on-top windows (incl. the flyout) so the HUD is
   // never occluded. It is a status readout, not a focus target.
-  dock.setAlwaysOnTop(true, 'screen-saver')
-  dock.setOpacity(dockOpacity)   // re-apply the stored transparency on (re)create
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.setOpacity(dockOpacity)   // re-apply the stored transparency on (re)create
   // Persistent HUD: intentionally NO 'blur' handler — it must not self-hide.
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    dock.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?view=dock`)
+    win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?view=dock`)
   } else {
-    dock.loadFile(join(__dirname, '../renderer/index.html'), { search: 'view=dock' })
+    win.loadFile(join(__dirname, '../renderer/index.html'), { search: 'view=dock' })
   }
-  dock.once('ready-to-show', () => dock?.show())
-  dock.on('closed', () => {
-    dock = null
+  win.once('ready-to-show', () => win.show())
+  // Guard against a stale 'closed' (fired after destroy()) clobbering a NEWER
+  // dock that a crash-recreate already assigned to the module-level `dock`.
+  win.on('closed', () => {
+    if (dock === win) dock = null
   })
-  return dock
+  win.webContents.on('render-process-gone', (_e, d) => {
+    logLine('dock', `render-process-gone reason=${d.reason} exitCode=${d.exitCode}`)
+    // Two guards for a deliberate destroyDock(): intentionalTeardown catches the
+    // event firing synchronously from inside destroy(); `dock !== win` catches it
+    // firing later (this window is no longer the current dock, whether torn down
+    // or already replaced).
+    if (intentionalTeardown || dock !== win) return
+    const now = Date.now()
+    if (!shouldRecreate(recreateTimestamps, now)) {
+      logLine('dock', 'dock renderer crash loop — giving up')
+      return
+    }
+    recreateTimestamps.push(now)
+    destroyDock()
+    // The recreated dock always starts COLLAPSED — the expanded/collapsed
+    // toggle is renderer-only state and isn't preserved across a crash.
+    // Opacity IS preserved (dockOpacity above is module state, re-applied).
+    createDock()
+  })
+  return win
 }
 
 export function destroyDock(): void {
+  intentionalTeardown = true
   if (dock && !dock.isDestroyed()) dock.destroy()
   dock = null
+  intentionalTeardown = false
 }
 
 /** Resize between the collapsed tab and the expanded panel, staying pinned to

@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, shell } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
+import { logLine } from './log'
 
 const WIDTH = 420
 const MARGIN = 12
@@ -75,6 +76,9 @@ export function createFlyout(): BrowserWindow {
   flyout.on('blur', () => { if (!pinned && !flyout?.isMinimized()) flyout?.hide() })
   flyout.on('moved', () => { userMoved = true })
   flyout.on('resized', () => { userMoved = true })
+  flyout.webContents.on('render-process-gone', (_e, d) => {
+    logLine('flyout', `render-process-gone reason=${d.reason} exitCode=${d.exitCode}`)
+  })
   flyout.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)          // oauth-url etc. open in the default browser
     return { action: 'deny' }

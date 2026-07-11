@@ -65,6 +65,9 @@ const tc = {
     setOpacity: (v: number) => ipcRenderer.invoke('tc:dock:setOpacity', v),
     isOpen: () => ipcRenderer.invoke('tc:dock:isOpen'),
   },
+  // Fire-and-forget renderer -> main log line (crash reports etc.) — no reply,
+  // so a broken renderer can call this without waiting on anything.
+  log: (source: string, line: string): void => { ipcRenderer.send('tc:log', source, line) },
 }
 
 contextBridge.exposeInMainWorld('tc', tc)

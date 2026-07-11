@@ -4,6 +4,7 @@ import { writeFile, mkdir, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import Store from 'electron-store'
+import { logLine } from './log'
 import type { Supervisor } from './supervisor'
 import { ProxyClient, type TcEvent } from './proxy-client'
 import { readTeamclaudeConfig, updateTeamclaudeConfig, redactConfig, type TcRoute } from './teamclaude-config'
@@ -299,6 +300,15 @@ export function registerIpc(deps: IpcDeps): () => void {
   ipcMain.handle('tc:dock:setExpanded', (_e, on: boolean) => deps.setDockExpanded(on))
   ipcMain.handle('tc:dock:setOpacity', (_e, v: number) => deps.setDockOpacity(v))
   ipcMain.handle('tc:dock:isOpen', () => deps.isDockOpen())
+
+  // Fire-and-forget renderer -> main log line (e.g. ErrorBoundary reports).
+  // Bounds on source/line length keep a misbehaving renderer from flooding
+  // the on-disk log; unrecognized shapes are silently dropped.
+  ipcMain.on('tc:log', (_e, source: unknown, line: unknown) => {
+    if (typeof source === 'string' && typeof line === 'string') {
+      logLine(`renderer:${source.slice(0, 32)}`, line.slice(0, 2000))
+    }
+  })
 
   return () => disconnectEvents()
 }
