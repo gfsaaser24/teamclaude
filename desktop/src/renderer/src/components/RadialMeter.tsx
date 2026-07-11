@@ -9,6 +9,8 @@
 // semantic on the app's hard-dark chrome regardless of --primary — clay is
 // the identity colour (active/CTA/focus) and must never read as a meter state.
 
+import AnimatedNumber from './AnimatedNumber'
+
 const OK = 'oklch(0.74 0.13 182)' // teal — normal
 const WARN = 'oklch(0.80 0.15 78)' // amber — ≥ 80%
 const DANGER = 'oklch(0.645 0.22 25)' // red — ≥ 98%
@@ -111,7 +113,8 @@ export default function RadialMeter({
         >
           {has ? (
             <span className="font-semibold text-foreground" style={{ fontSize: numberFont, lineHeight: 1 }}>
-              {pct}
+              {/* Ticks between values in step with the arc's dashoffset tween. */}
+              <AnimatedNumber value={pct} />
               <span className="font-semibold text-muted-foreground" style={{ fontSize: pctFont }}>
                 %
               </span>

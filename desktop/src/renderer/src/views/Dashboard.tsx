@@ -78,7 +78,9 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
     return (
       <div className="space-y-3">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Proxy is starting…</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="font-serif text-lg font-normal tracking-tight">Proxy is starting…</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-2">
             <p className="text-xs text-muted-foreground">
               State: {proxyState}. If it stays down, use the buttons below.
@@ -122,22 +124,41 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
 
   return (
     <div className="space-y-3">
-      {/* Active-account HUD — the one thing that must survive a 240px window.
-          Highlighted with a faint accent ring so it stays the focal block. */}
-      <div className="rounded-xl border border-primary/25 bg-card/70 p-3 shadow-sm ring-1 ring-inset ring-primary/5">
+      {/* Active-account hero — the one thing that must survive the 300×360
+          compact HUD. Mono eyebrow + serif display name over a faint clay
+          identity wash; the meters sit centred underneath. */}
+      <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card p-4">
+        {/* Decorative clay wash along the top edge — identity, not status. */}
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-primary/[0.07] to-transparent" />
+        <div className="relative">
         <div className="flex min-w-0 items-center gap-2">
-          <span className={`size-2 shrink-0 rounded-full ${dot}`} aria-hidden />
+          <span className={`size-1.5 shrink-0 rounded-full ${dot}`} aria-hidden />
+          <span className="min-w-0 truncate font-mono text-[10px] font-medium tracking-[0.14em] uppercase text-muted-foreground">
+            Active account
+          </span>
+          <span className="ml-auto shrink-0 font-mono text-[9px] font-medium tracking-[0.12em] uppercase text-foreground-tertiary">
+            {proxyState}
+          </span>
+          <Button size="icon-xs" variant="ghost" className="shrink-0 text-muted-foreground"
+            aria-label="Refresh accounts" title="Refresh accounts &amp; usage"
+            onClick={() => void refresh()} disabled={refreshing}>
+            <RefreshCw className={refreshing ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+
+        <div className="mt-1 flex min-w-0 items-center">
           {/* Account switcher — the active-account name doubles as a dropdown:
               pick any account to pin it, or Auto-rotate to unpin. Trigger is
-              styled as plain text so the HUD reads the same as before. */}
+              styled as plain display text so the hero reads as typography. */}
           {accounts.length > 0 ? (
             <Select value={status.manualAccount ?? AUTO} onValueChange={v => void pick(v)}>
               <SelectTrigger
                 size="sm"
                 aria-label="Switch active account"
-                className="h-6 min-w-0 flex-1 justify-start gap-1 rounded-sm border-0 bg-transparent px-1 py-0 shadow-none hover:bg-accent/40 dark:bg-transparent dark:hover:bg-accent/40"
+                className="-mx-1 h-auto min-w-0 flex-1 justify-start gap-1.5 rounded-md border-0 bg-transparent px-1 py-0.5 shadow-none data-[size=sm]:h-auto hover:bg-accent/40 dark:bg-transparent dark:hover:bg-accent/40"
               >
-                <span className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground"
+                <span
+                  className={`min-w-0 truncate text-left font-serif font-normal leading-tight tracking-tight text-foreground ${compact ? 'text-xl' : 'text-2xl'}`}
                   title={status.currentAccount ?? undefined}>
                   {status.currentAccount ?? 'No active account'}
                 </span>
@@ -166,24 +187,19 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
               </SelectContent>
             </Select>
           ) : (
-            <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight"
+            <span
+              className={`min-w-0 flex-1 truncate font-serif font-normal leading-tight tracking-tight ${compact ? 'text-xl' : 'text-2xl'}`}
               title={status.currentAccount ?? undefined}>
               {status.currentAccount ?? 'No active account'}
             </span>
           )}
-          <span className="shrink-0 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">{proxyState}</span>
-          <Button size="icon-sm" variant="ghost" className="shrink-0 text-muted-foreground"
-            aria-label="Refresh accounts" title="Refresh accounts &amp; usage"
-            onClick={() => void refresh()} disabled={refreshing}>
-            <RefreshCw className={refreshing ? 'animate-spin' : ''} />
-          </Button>
         </div>
 
         {/* Manual pin / cycle — pick the active account by hand. Present in
             compact mode too (cycling by hand matters most there). Own row +
             flex-wrap so it never blows past a 240px window. */}
         {accounts.length > 0 && (
-          <div className="mt-2 flex flex-wrap items-center gap-1">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
             <Button size="icon-xs" variant="ghost" className="shrink-0 text-muted-foreground"
               aria-label="Pin previous account" title="Previous account"
               onClick={() => void cycle(-1)}>
@@ -196,7 +212,7 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
             </Button>
             {pinned ? (
               <>
-                <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-[9px] font-medium">pinned</Badge>
+                <Badge variant="secondary" className="h-5 shrink-0 px-1.5 font-mono text-[9px] font-medium tracking-[0.1em] uppercase">pinned</Badge>
                 <Button size="xs" variant="outline" className="shrink-0"
                   aria-label="Return to auto-rotation" title="Return to auto-rotation"
                   onClick={() => void goAuto()}>
@@ -204,20 +220,23 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
                 </Button>
               </>
             ) : (
-              <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">auto-rotating</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-[9px] tracking-[0.1em] uppercase text-foreground-tertiary">auto-rotating</span>
             )}
           </div>
         )}
 
-        <div className="mt-3 flex justify-center">
+        <div className={compact ? 'mt-3 flex justify-center' : 'mt-4 flex justify-center'}>
           {active
-            ? <Gauges q={active.quota} size={54} stroke={6} className="flex flex-wrap items-start justify-center gap-x-4 gap-y-2.5" />
+            ? <Gauges q={active.quota} size={compact ? 54 : 64} stroke={compact ? 6 : 6.5}
+                className={compact
+                  ? 'flex flex-wrap items-start justify-center gap-x-4 gap-y-2.5'
+                  : 'flex flex-wrap items-start justify-center gap-x-5 gap-y-3'} />
             : <p className="text-[11px] text-muted-foreground">Waiting for quota data…</p>}
         </div>
 
         {!compact && (
-          <div className="mt-3 space-y-2 border-t border-border/50 pt-2.5">
-            <div className="truncate text-[10px] text-muted-foreground" title={meta}>{meta}</div>
+          <div className="mt-4 space-y-2 border-t border-border/50 pt-2.5">
+            <div className="truncate font-mono text-[10px] text-foreground-tertiary" title={meta}>{meta}</div>
             <div className="flex gap-1.5">
               <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => void window.tc.api.reload()}>
                 <RotateCw /> Reload
@@ -228,13 +247,14 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {/* Other accounts — name on the left, a tight row of micro-gauges on the
           right. Wraps below the name when a 240px window can't fit both. */}
       {!compact && others.length > 0 && (
         <div className="space-y-1.5">
-          <div className="px-0.5 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Other accounts</div>
+          <div className="px-0.5 font-mono text-[10px] font-medium tracking-[0.14em] uppercase text-muted-foreground">Other accounts</div>
           {others.map(a => (
             <div key={a.name} className="rounded-lg border border-border/50 bg-card/40 px-2.5 py-2">
               <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
