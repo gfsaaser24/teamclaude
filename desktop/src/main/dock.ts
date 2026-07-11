@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
 import { logLine } from './log'
 import { shouldRecreate } from './crash-backoff'
+import { refreshTrayMenu } from './tray'
 
 // A persistent, semi-transparent micro-HUD pinned to the right screen edge. It
 // is a SEPARATE window from the flyout: always-on-top, never hidden on blur, and
@@ -92,6 +93,10 @@ export function createDock(): BrowserWindow {
       // silently no-ops. Timestamps are NOT reset — a user-initiated recreate
       // is still subject to the budget until the 60s window slides.
       destroyDock()
+      // The tray's "Show edge dock (HUD)" checkbox reads isDockShown() only when
+      // the menu is (re)built — without this, it stays checked after a give-up
+      // until the user happens to reopen the menu for an unrelated reason.
+      refreshTrayMenu()
       return
     }
     recreateTimestamps.push(now)

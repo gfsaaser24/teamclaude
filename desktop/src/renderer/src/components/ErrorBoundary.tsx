@@ -33,15 +33,15 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (!error) return this.props.children
     return (
       <div className="flex h-full w-full items-center justify-center overflow-hidden p-2">
-        <div className="flex w-fit max-w-full flex-col items-center gap-1.5 rounded-lg border border-white/10 bg-neutral-950/90 p-2 text-center">
-          <p className="text-[11px] font-semibold text-foreground">Something broke</p>
+        <div className="flex w-fit min-w-0 max-w-full flex-col items-center gap-1.5 rounded-lg border border-border bg-background/90 p-2 text-center">
+          <p className="break-words text-[11px] font-semibold text-foreground">Something broke</p>
           <p className="max-w-full break-words font-mono text-[9px] leading-tight text-muted-foreground">
             {error.message}
           </p>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="app-no-drag rounded-md bg-white/10 px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-white/20"
+            className="app-no-drag w-full truncate rounded-md bg-foreground/10 px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-foreground/20"
           >
             Reload
           </button>
