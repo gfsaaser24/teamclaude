@@ -1,9 +1,17 @@
 @import "tailwindcss";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
 
 @custom-variant dark (&:is(.dark *));
 
+/* NOTE — dark-only app: `desktop/src/renderer/index.html` hardcodes
+   `class="dark"` on <html> and nothing ever toggles it, so the `.dark` block
+   below is the single source of truth the app actually renders. The
+   shadcn-generated light palette in :root is kept only so the CSS-variable
+   contract stays intact (never painted) — do not treat it as live. */
 :root {
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -37,25 +45,38 @@
   --sidebar-ring: oklch(0.705 0.015 286.067);
 }
 
+/* Warm ink + clay — the app's only real theme. Every value below is an oklch
+   conversion of the spec hex; the hex is cited in a comment beside it so the
+   source of truth is still legible at a glance. */
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
+  --background: oklch(0.191 0.002 106.586); /* #141413 — warm ink (not zinc) */
+  --foreground: oklch(0.982 0.005 95.099); /* #faf9f5 — cream */
+  --card: oklch(0.235 0.004 84.586); /* #1f1e1c */
+  --card-foreground: oklch(0.982 0.005 95.099); /* #faf9f5 — cream */
+  --popover: oklch(0.235 0.004 84.586); /* #1f1e1c */
+  --popover-foreground: oklch(0.982 0.005 95.099); /* #faf9f5 — cream */
+  --primary: oklch(0.672 0.131 38.756); /* #d97757 — clay (identity color) */
+  --primary-foreground: oklch(0.191 0.002 106.586); /* #141413 */
+  /* Deep clay hover/active state. Not part of the base shadcn contract —
+     exposed as its own variable + `--color-primary-hover` theme entry below
+     for buttons and other interactive clay surfaces to reference. */
+  --primary-hover: oklch(0.608 0.138 39.006); /* #c6613f */
+  /* Hover ladder: interactive surfaces built on --secondary/--muted should
+     step one shade lighter on hover/active (e.g. mix toward --card-foreground
+     or an explicit lighter warm gray) rather than reaching for cold zinc. */
+  --secondary: oklch(0.264 0.006 91.584); /* #262522 */
+  --secondary-foreground: oklch(0.982 0.005 95.099); /* #faf9f5 — cream */
+  --muted: oklch(0.264 0.006 91.584); /* #262522 — matches --secondary, as upstream */
+  --muted-foreground: oklch(0.75 0.013 96.478); /* #b0aea5 — warm cloud */
+  /* Tertiary text tier (captions, disabled labels) — not a stock shadcn slot,
+     exposed as `--color-foreground-tertiary` / `text-foreground-tertiary`. */
+  --foreground-tertiary: oklch(0.619 0.01 100.088); /* #87867f */
+  --accent: oklch(0.672 0.131 38.756 / 12%); /* clay @ ~12% alpha, #d97757 */
+  --accent-foreground: oklch(0.982 0.005 95.099); /* #faf9f5 — cream */
+  --destructive: oklch(0.704 0.191 22.216); /* unchanged — stays a red, distinct from clay */
+  --border: oklch(0.982 0.005 95.099 / 10%); /* cream hairline @ ~10% alpha, #faf9f5 */
+  --input: oklch(0.982 0.005 95.099 / 10%); /* cream hairline @ ~10% alpha, #faf9f5 */
+  --ring: oklch(0.672 0.131 38.756); /* clay, #d97757 */
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -84,10 +105,12 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-foreground-tertiary: var(--foreground-tertiary);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -107,6 +130,10 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* Type system: serif for display moments, mono (JetBrains Mono, imported
+     above) for labels/numbers. Body text stays the system sans stack. */
+  --font-serif: Georgia, 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', Consolas, monospace;
 }
 
 @layer base {
