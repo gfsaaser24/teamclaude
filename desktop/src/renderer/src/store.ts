@@ -16,7 +16,35 @@ interface TcStore {
   pushEvent: (evt: TcEvent) => void
 }
 
+// Status refreshes are throttled, but with a trailing edge: a trigger landing
+// inside the window schedules ONE deferred refresh instead of being dropped.
+// The last request of a burst is the one whose response carried the final
+// quota numbers — dropping it froze the dock HUD at mid-burst values.
+const STATUS_THROTTLE_MS = 2000
 let lastStatusRefresh = 0
+let trailingRefresh: ReturnType<typeof setTimeout> | null = null
+
+function throttledStatusRefresh(refresh: () => void): void {
+  const since = Date.now() - lastStatusRefresh
+  if (since >= STATUS_THROTTLE_MS) {
+    lastStatusRefresh = Date.now()
+    refresh()
+    return
+  }
+  if (trailingRefresh) return // a pending trailing refresh already covers this burst
+  trailingRefresh = setTimeout(() => {
+    trailingRefresh = null
+    lastStatusRefresh = Date.now()
+    refresh()
+  }, STATUS_THROTTLE_MS - since)
+}
+
+// Quota also moves server-side with NO event to tell us: the background quota
+// probe, quota-window resets, and usage from other devices on the same
+// accounts. A slow poll keeps long-lived windows honest — the edge dock
+// especially, which unlike the flyout has no user interactions to refresh it.
+const STATUS_POLL_MS = 30_000
+let statusPoll: ReturnType<typeof setInterval> | null = null
 
 export const useTcStore = create<TcStore>((set, get) => ({
   proxyState: 'stopped',
@@ -40,6 +68,10 @@ export const useTcStore = create<TcStore>((set, get) => ({
     set({ settings })
     const recent = await window.tc.api.recentEvents().catch(() => [])
     for (const e of recent) get().pushEvent(e)
+    // One poll per window, even when React StrictMode double-runs init().
+    if (!statusPoll) {
+      statusPoll = setInterval(() => throttledStatusRefresh(() => void get().refreshStatus()), STATUS_POLL_MS)
+    }
   },
 
   refreshStatus: async () => {
@@ -60,9 +92,10 @@ export const useTcStore = create<TcStore>((set, get) => ({
     if (events.some(e => e.id === evt.id)) return
     const next = [...events, evt]
     set({ events: next.length > 500 ? next.slice(next.length - 500) : next })
-    if ((evt.type === 'request-end' || evt.type === 'oauth-complete') && Date.now() - lastStatusRefresh > 2000) {
-      lastStatusRefresh = Date.now()
-      void get().refreshStatus()
+    if (evt.type === 'request-end' || evt.type === 'oauth-complete') {
+      throttledStatusRefresh(() => void get().refreshStatus())
+      // Config refresh is outside the throttle: oauth-complete is rare, and a
+      // new account must show up even right after a request burst.
       if (evt.type === 'oauth-complete') void get().refreshConfig()
     }
   },
