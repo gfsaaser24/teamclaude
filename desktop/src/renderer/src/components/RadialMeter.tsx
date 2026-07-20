@@ -10,6 +10,7 @@
 // the identity colour (active/CTA/focus) and must never read as a meter state.
 
 import AnimatedNumber from './AnimatedNumber'
+import { resetLong, untilResetCompact } from '@renderer/lib/reset'
 
 const OK = 'oklch(0.74 0.13 182)' // teal — normal
 const WARN = 'oklch(0.80 0.15 78)' // amber — ≥ 80%
@@ -27,12 +28,15 @@ export default function RadialMeter({
   size = 46,
   stroke = 5,
   resetMs = null,
+  showReset = false,
 }: {
   label?: string
   ratio: number | null
   size?: number
   stroke?: number
   resetMs?: number | null
+  /** Render a tiny "2d" / "5h" countdown caption under the gauge. */
+  showReset?: boolean
 }): React.JSX.Element {
   const c = size / 2
   const r = (size - stroke) / 2
@@ -47,15 +51,17 @@ export default function RadialMeter({
   const numberFont = Math.round(size * 0.3)
   const pctFont = Math.round(size * 0.17)
   const captionFont = Math.max(8, Math.round(size * 0.18))
+  const resetFont = Math.max(7, Math.round(size * 0.16))
 
-  const resets =
-    resetMs != null && resetMs > Date.now()
-      ? new Date(resetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : null
+  // Tooltip carries the full reset story ("in 2d 5h" + weekday date); the
+  // optional visible caption is the single-unit countdown only.
+  const future = resetMs != null && resetMs > Date.now()
+  const resets = future ? resetLong(resetMs as number) : null
+  const resetsCompact = future ? untilResetCompact(resetMs as number) : null
 
   const face = has ? `${pct}%` : '—'
   const aria = `${label ? `${label} ` : ''}${has ? `${pct}%` : 'no data'}`
-  const title = `${label ? `${label} · ` : ''}${has ? `${pct}% used` : 'no data'}${resets ? ` · resets ${resets}` : ''}`
+  const title = `${label ? `${label} · ` : ''}${has ? `${pct}% used` : 'no data'}${resets ? ` · ${resets}` : ''}`
 
   return (
     <div
@@ -132,6 +138,14 @@ export default function RadialMeter({
           style={{ fontSize: captionFont }}
         >
           {label}
+        </span>
+      )}
+      {showReset && resetsCompact && (
+        <span
+          className={`${label ? 'mt-0.5' : 'mt-1'} w-full truncate text-center leading-none tracking-tight text-foreground-tertiary`}
+          style={{ fontSize: resetFont, fontVariantNumeric: 'tabular-nums' }}
+        >
+          {resetsCompact}
         </span>
       )}
     </div>

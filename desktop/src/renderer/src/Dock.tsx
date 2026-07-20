@@ -49,11 +49,11 @@ function StackedRings({ q }: { q: TcAccountStatus['quota'] }): React.JSX.Element
       className="flex flex-col items-center gap-1"
       title="Top→bottom: Session · Weekly · Fable"
     >
-      <RadialMeter ratio={q.unified5h} resetMs={q.unified5hReset} size={RING} stroke={RING_STROKE} />
-      <RadialMeter ratio={q.unified7d} resetMs={q.unified7dReset} size={RING} stroke={RING_STROKE} />
-      <RadialMeter ratio={q.unified7dFable} resetMs={q.unified7dFableReset} size={RING} stroke={RING_STROKE} />
+      <RadialMeter ratio={q.unified5h} resetMs={q.unified5hReset} size={RING} stroke={RING_STROKE} showReset />
+      <RadialMeter ratio={q.unified7d} resetMs={q.unified7dReset} size={RING} stroke={RING_STROKE} showReset />
+      <RadialMeter ratio={q.unified7dFable} resetMs={q.unified7dFableReset} size={RING} stroke={RING_STROKE} showReset />
       {typeof q.unified7dSonnet === 'number' && (
-        <RadialMeter ratio={q.unified7dSonnet} resetMs={q.unified7dSonnetReset} size={RING} stroke={RING_STROKE} />
+        <RadialMeter ratio={q.unified7dSonnet} resetMs={q.unified7dSonnetReset} size={RING} stroke={RING_STROKE} showReset />
       )}
     </div>
   )
@@ -74,6 +74,7 @@ function Meters({ q }: { q: TcAccountStatus['quota'] }): React.JSX.Element {
           resetMs={q.unified5hReset}
           size={GAUGE}
           stroke={STROKE}
+          showReset
         />
       )}
       {typeof q.unified7d === 'number' && (
@@ -83,6 +84,7 @@ function Meters({ q }: { q: TcAccountStatus['quota'] }): React.JSX.Element {
           resetMs={q.unified7dReset}
           size={GAUGE}
           stroke={STROKE}
+          showReset
         />
       )}
       {typeof q.unified7dFable === 'number' && (
@@ -92,6 +94,7 @@ function Meters({ q }: { q: TcAccountStatus['quota'] }): React.JSX.Element {
           resetMs={q.unified7dFableReset}
           size={GAUGE}
           stroke={STROKE}
+          showReset
         />
       )}
       {typeof q.unified7dSonnet === 'number' && (
@@ -101,6 +104,7 @@ function Meters({ q }: { q: TcAccountStatus['quota'] }): React.JSX.Element {
           resetMs={q.unified7dSonnetReset}
           size={GAUGE}
           stroke={STROKE}
+          showReset
         />
       )}
     </div>

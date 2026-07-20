@@ -49,16 +49,16 @@ function Gauges({
   return (
     <div className={className}>
       {typeof q.unified5h === 'number' && (
-        <RadialMeter label="Session" ratio={q.unified5h} resetMs={q.unified5hReset} size={size} stroke={stroke} />
+        <RadialMeter label="Session" ratio={q.unified5h} resetMs={q.unified5hReset} size={size} stroke={stroke} showReset />
       )}
       {typeof q.unified7d === 'number' && (
-        <RadialMeter label="Weekly" ratio={q.unified7d} resetMs={q.unified7dReset} size={size} stroke={stroke} />
+        <RadialMeter label="Weekly" ratio={q.unified7d} resetMs={q.unified7dReset} size={size} stroke={stroke} showReset />
       )}
       {typeof q.unified7dFable === 'number' && (
-        <RadialMeter label="Fable" ratio={q.unified7dFable} resetMs={q.unified7dFableReset} size={size} stroke={stroke} />
+        <RadialMeter label="Fable" ratio={q.unified7dFable} resetMs={q.unified7dFableReset} size={size} stroke={stroke} showReset />
       )}
       {typeof q.unified7dSonnet === 'number' && (
-        <RadialMeter label="Sonnet" ratio={q.unified7dSonnet} resetMs={q.unified7dSonnetReset} size={size} stroke={stroke} />
+        <RadialMeter label="Sonnet" ratio={q.unified7dSonnet} resetMs={q.unified7dSonnetReset} size={size} stroke={stroke} showReset />
       )}
     </div>
   )
