@@ -9,7 +9,7 @@ import {
   SelectSeparator,
   SelectTrigger,
 } from '@renderer/components/ui/select'
-import { RotateCw, Play, Square, RefreshCw, ChevronLeft, ChevronRight, Zap } from 'lucide-react'
+import { RotateCw, Play, Square, RefreshCw, ChevronLeft, ChevronRight, Zap, AppWindow } from 'lucide-react'
 import { useTcStore } from '../store'
 import RadialMeter from '../components/RadialMeter'
 import type { TcAccountStatus } from '../types'
@@ -124,6 +124,14 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
 
   return (
     <div className="space-y-3">
+      {/* Quick-launch Synara — top of the Home screen. Hidden in the compact
+          dock HUD (no room). Opens/focuses the Synara app (single-instance). */}
+      {!compact && (
+        <Button size="sm" variant="outline" className="w-full"
+          onClick={() => void window.tc.launcher.openSynara()}>
+          <AppWindow className="size-4" /> Open Synara
+        </Button>
+      )}
       {/* Active-account hero — the one thing that must survive the 300×360
           compact HUD. Mono eyebrow + serif display name over a faint clay
           identity wash; the meters sit centred underneath. */}

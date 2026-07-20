@@ -47,6 +47,7 @@ const tc = {
     add: (p: unknown) => ipcRenderer.invoke('tc:launcher:add', p),
     remove: (path: string) => ipcRenderer.invoke('tc:launcher:remove', path),
     open: (path: string) => ipcRenderer.invoke('tc:launcher:open', path),
+    openSynara: () => ipcRenderer.invoke('tc:launcher:openSynara'),
     pickFolder: () => ipcRenderer.invoke('tc:launcher:pickFolder'),
   },
   settings: {

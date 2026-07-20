@@ -152,7 +152,39 @@ export default function Settings(): React.JSX.Element {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">App</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              {field(s, 'Editor command (Trae CLI)', 'editorCommand')}
+              {/* Editor picker — the app TeamClaude launches when you open a project.
+                  Presets ('trae' / 'synara') resolve to their known install; Custom
+                  keeps the free-text command/path for anything else. */}
+              <div className="space-y-1">
+                <Label className="text-xs">Editor</Label>
+                <Select
+                  value={s.editorCommand === 'trae' ? 'trae' : s.editorCommand === 'synara' ? 'synara' : 'custom'}
+                  onValueChange={v => {
+                    if (v === 'trae') setS({ ...s, editorCommand: 'trae' })
+                    else if (v === 'synara') setS({ ...s, editorCommand: 'synara' })
+                    // Switching to Custom from a preset clears the keyword so the
+                    // text field is empty to type into; an existing custom value stays.
+                    else setS({ ...s, editorCommand: (s.editorCommand === 'trae' || s.editorCommand === 'synara') ? '' : s.editorCommand })
+                  }}
+                >
+                  <SelectTrigger size="sm" className="h-7 w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="trae">Trae</SelectItem>
+                    <SelectItem value="synara">Synara</SelectItem>
+                    <SelectItem value="custom">Custom…</SelectItem>
+                  </SelectContent>
+                </Select>
+                {s.editorCommand !== 'trae' && s.editorCommand !== 'synara' && (
+                  <Input value={s.editorCommand} className="h-7 font-mono"
+                    placeholder="Editor command on PATH, or full path to its .exe"
+                    onChange={e => setS({ ...s, editorCommand: e.target.value })} />
+                )}
+                {s.editorCommand === 'synara' && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Launches the Synara app. Turn on “Route my Claude through this” above so Synara’s Claude routes through this proxy (restart Synara after enabling).
+                  </p>
+                )}
+              </div>
               {field(s, 'Toggle hotkey (Electron accelerator)', 'hotkey')}
               <div className="flex items-center justify-between">
                 <Label className="text-xs">Launch at login</Label>

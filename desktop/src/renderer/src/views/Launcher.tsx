@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@renderer/components/ui/select'
-import { FolderOpen, Plus, Trash2, ExternalLink } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, ExternalLink, AppWindow } from 'lucide-react'
 import { useTcStore } from '../store'
 
 // Curated from the real `claude --help`. Booleans each map to one flag; selects
@@ -108,9 +108,18 @@ export default function Launcher(): React.JSX.Element {
     const r = await window.tc.launcher.open(path)
     if (!r.ok) setError(r.error ?? 'Failed to open editor')
   }
+  const openSynara = async (): Promise<void> => {
+    setError(null)
+    const r = await window.tc.launcher.openSynara()
+    if (!r.ok) setError(r.error ?? 'Failed to open Synara')
+  }
 
   return (
     <div className="space-y-3">
+      <Button size="sm" variant="outline" className="w-full" onClick={() => void openSynara()}>
+        <AppWindow className="size-4" /> Open Synara
+      </Button>
+
       <Card>
         <CardContent className="space-y-2">
           <div className="flex items-center justify-between">
