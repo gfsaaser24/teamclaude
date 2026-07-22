@@ -1,14 +1,69 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Card, CardContent } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { Label } from '@renderer/components/ui/label'
 import { Badge } from '@renderer/components/ui/badge'
-import { Plus, Trash2, Save, X, ChevronDown, ChevronRight, Route as RouteIcon } from 'lucide-react'
+import { Plus, Trash2, Save, X, ChevronDown, ChevronRight, Route as RouteIcon, AlertTriangle } from 'lucide-react'
 import { useTcStore } from '../store'
-import type { TcEvent } from '../types'
+import type { TcEvent, TcStatus } from '../types'
 
 interface Route { name: string; match: string[]; accounts?: string[]; bucket?: string }
+
+// Coerce a status-DTO route-account entry to its name string. The /status display
+// DTO carries account refs as either plain id/name strings OR {name, eligible}
+// display objects; both collapse to a name here. Display-only — these names are
+// never written back (the 404-degraded view is strictly read-only).
+function accountRefName(a: unknown): string | null {
+  if (typeof a === 'string') return a.trim() || null
+  if (a && typeof a === 'object' && typeof (a as { name?: unknown }).name === 'string') {
+    return (a as { name: string }).name.trim() || null
+  }
+  return null
+}
+
+// Read-only routes derived from the /teamclaude/status display DTO. Used ONLY
+// when the dedicated /routes endpoints are unsupported (older teamclaude → 404):
+// instead of showing an empty list (which reads as "no routes configured"), we
+// surface the routes actually in effect, strictly for display. Never persisted;
+// the view keeps every control disabled and shows the update-teamclaude notice.
+export function routesFromStatus(status: TcStatus | null | undefined): Route[] {
+  const raw = status?.routes
+  if (!Array.isArray(raw)) return []
+  const out: Route[] = []
+  for (const r of raw as unknown[]) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    if (typeof o.name !== 'string' || !o.name.trim()) continue
+    const match = Array.isArray(o.match) ? o.match.filter((m): m is string => typeof m === 'string' && m.trim() !== '') : []
+    const accounts = Array.isArray(o.accounts) ? o.accounts.map(accountRefName).filter((n): n is string => !!n) : []
+    out.push({
+      name: o.name.trim(),
+      match,
+      accounts: accounts.length ? accounts : undefined,
+      bucket: typeof o.bucket === 'string' && o.bucket.trim() ? o.bucket : undefined,
+    })
+  }
+  return out
+}
+
+// Normalize the editor's routes into the strings-only shape the POST endpoint
+// accepts: drop nameless/matchless routes, trim, and keep only string account
+// refs. Exported for unit tests — this is the last guard before a write, so a
+// stray {name,eligible} display object (the B5 corruption) can never leave here.
+export function sanitizeRoutes(routes: Route[]): Route[] {
+  return routes
+    .filter(r => r.name.trim() && r.match.length)
+    .map(r => ({
+      name: r.name.trim(),
+      match: r.match.filter(m => typeof m === 'string' && m.trim() !== ''),
+      accounts: r.accounts?.filter(a => typeof a === 'string' && a.trim() !== '').length
+        ? r.accounts.filter(a => typeof a === 'string' && a.trim() !== '')
+        : undefined,
+      bucket: r.bucket?.trim() || undefined,
+    }))
+    .filter(r => r.match.length)
+}
 
 // Model-family glob presets — click to add the matching glob without knowing
 // the exact versioned model id.
@@ -21,7 +76,7 @@ const PRESETS: { label: string; glob: string }[] = [
 ]
 
 // Distinct model ids actually observed in the live event stream, newest first.
-function observedModels(events: TcEvent[]): string[] {
+export function observedModels(events: TcEvent[]): string[] {
   const seen: string[] = []
   for (let i = events.length - 1; i >= 0 && seen.length < 12; i--) {
     const m = events[i].model
@@ -31,10 +86,28 @@ function observedModels(events: TcEvent[]): string[] {
 }
 
 export default function Routing(): React.JSX.Element {
-  const { status, events, refreshStatus } = useTcStore()
+  const { status, events, proxyState } = useTcStore()
   const [routes, setRoutes] = useState<Route[]>([])
   const [dirty, setDirty] = useState(false)
-  useEffect(() => { if (!dirty) setRoutes(status?.routes ?? []) }, [status, dirty])
+  // Capability sniff by response: false once GET/POST /routes answers 404 on an
+  // older teamclaude → the tab drops to a read-only "update teamclaude" view.
+  const [supported, setSupported] = useState(true)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  // Routes come from GET /teamclaude/routes — NEVER the /status display DTO
+  // (that was the B5 corruption source). Re-loads when the proxy state flips so
+  // a freshly-connected proxy fills the tab; skipped while the user has unsaved
+  // edits so a background reload can't clobber them.
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const r = await window.tc.routes.get()
+      setSupported(r.supported)
+      if (!dirty) setRoutes(r.routes ?? [])
+    } catch {
+      /* proxy down — leave the last-known routes; the tab shows the down state */
+    }
+  }, [dirty])
+  useEffect(() => { void load() }, [load, proxyState])
 
   const accounts = status?.accounts ?? []
   const observed = useMemo(() => observedModels(events), [events])
@@ -51,20 +124,24 @@ export default function Routing(): React.JSX.Element {
     setRoutes(rs => rs.filter((_x, j) => j !== i)); setDirty(true)
   }
   const save = async (): Promise<void> => {
-    const clean = routes
-      .filter(r => r.name.trim() && r.match.length)
-      .map(r => ({
-        name: r.name.trim(),
-        match: r.match,
-        accounts: r.accounts?.length ? r.accounts : undefined,
-        bucket: r.bucket?.trim() || undefined,
-      }))
-    await window.tc.config.setRoutes(clean)
+    setSaveError(null)
+    const r = await window.tc.routes.set(sanitizeRoutes(routes))
+    if (!r.ok) {
+      if (!r.supported) setSupported(false)
+      setSaveError(r.error ?? 'Could not save routes.')
+      return
+    }
     setDirty(false)
-    await refreshStatus()
+    await load()
   }
 
   const incomplete = routes.some(r => r.name.trim() && r.match.length === 0)
+
+  // What the tab shows. When editing is supported these are the editable routes
+  // loaded from GET /routes. When unsupported (404), fall back to the read-only
+  // routes derived from the /status display DTO so the user sees what is actually
+  // in effect rather than a misleading empty "no routes yet" state.
+  const displayRoutes = supported ? routes : routesFromStatus(status)
 
   return (
     <div className="space-y-3">
@@ -73,14 +150,30 @@ export default function Routing(): React.JSX.Element {
           Send specific models to specific accounts. First matching route wins.
         </p>
         <div className="flex shrink-0 gap-2">
-          <Button size="sm" variant="outline" onClick={addRoute}><Plus className="size-4" /> Route</Button>
-          <Button size="sm" onClick={() => void save()} disabled={!dirty || incomplete}>
+          <Button size="sm" variant="outline" onClick={addRoute} disabled={!supported}><Plus className="size-4" /> Route</Button>
+          <Button size="sm" onClick={() => void save()} disabled={!supported || !dirty || incomplete}>
             <Save className="size-4" /> Save
           </Button>
         </div>
       </div>
 
-      {routes.length === 0 && (
+      {!supported && (
+        <Card className="border-amber-500/40">
+          <CardContent className="flex items-start gap-2 py-3">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+            <p className="text-xs text-muted-foreground">
+              This teamclaude build predates route editing — routes are shown read-only.
+              <span className="text-foreground"> Update teamclaude</span> to change them.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {saveError && supported && (
+        <p className="text-xs text-destructive">{saveError}</p>
+      )}
+
+      {displayRoutes.length === 0 && (
         <Card>
           <CardContent className="space-y-2 py-6 text-center">
             <RouteIcon className="mx-auto size-6 text-muted-foreground" />
@@ -90,17 +183,18 @@ export default function Routing(): React.JSX.Element {
               Add a route to pin a model to specific accounts — e.g. send <span className="font-mono">Opus</span> only
               to your Max accounts so it never spends your API key.
             </p>
-            <Button size="sm" className="mt-1" onClick={addRoute}><Plus className="size-4" /> Add your first route</Button>
+            <Button size="sm" className="mt-1" onClick={addRoute} disabled={!supported}><Plus className="size-4" /> Add your first route</Button>
           </CardContent>
         </Card>
       )}
 
-      {routes.map((r, i) => (
+      {displayRoutes.map((r, i) => (
         <RouteEditor
           key={i}
           route={r}
           accounts={accounts.map(a => ({ name: a.name, type: a.type, org: a.orgName }))}
           observed={observed}
+          readOnly={!supported}
           onChange={patch => edit(i, patch)}
           onRemove={() => removeRoute(i)}
         />
@@ -109,10 +203,11 @@ export default function Routing(): React.JSX.Element {
   )
 }
 
-function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
+function RouteEditor({ route, accounts, observed, readOnly, onChange, onRemove }: {
   route: Route
   accounts: { name: string; type: string; org: string | null }[]
   observed: string[]
+  readOnly: boolean
   onChange: (patch: Partial<Route>) => void
   onRemove: () => void
 }): React.JSX.Element {
@@ -120,11 +215,13 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
   const [advanced, setAdvanced] = useState(!!route.bucket)
 
   const addModel = (glob: string): void => {
+    if (readOnly) return
     const g = glob.trim()
     if (g && !route.match.includes(g)) onChange({ match: [...route.match, g] })
   }
-  const removeModel = (g: string): void => onChange({ match: route.match.filter(x => x !== g) })
+  const removeModel = (g: string): void => { if (!readOnly) onChange({ match: route.match.filter(x => x !== g) }) }
   const toggleAccount = (name: string): void => {
+    if (readOnly) return
     const set = new Set(route.accounts ?? [])
     if (set.has(name)) set.delete(name); else set.add(name)
     onChange({ accounts: [...set] })
@@ -148,9 +245,10 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
             value={route.name}
             placeholder="route name"
             className="h-8 min-w-0 flex-1"
+            disabled={readOnly}
             onChange={e => onChange({ name: e.target.value })}
           />
-          <Button variant="ghost" size="icon" className="shrink-0 text-destructive" aria-label="Delete route" onClick={onRemove}>
+          <Button variant="ghost" size="icon" className="shrink-0 text-destructive" aria-label="Delete route" disabled={readOnly} onClick={onRemove}>
             <Trash2 className="size-4" />
           </Button>
         </div>
@@ -163,16 +261,18 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
               {route.match.map(m => (
                 <Badge key={m} variant="secondary" className="max-w-full gap-1 pr-1 font-mono text-[11px]">
                   <span className="truncate" title={m}>{m}</span>
-                  <button className="app-no-drag shrink-0 rounded-sm opacity-60 hover:opacity-100" aria-label={`Remove ${m}`} onClick={() => removeModel(m)}>
-                    <X className="size-3" />
-                  </button>
+                  {!readOnly && (
+                    <button className="app-no-drag shrink-0 rounded-sm opacity-60 hover:opacity-100" aria-label={`Remove ${m}`} onClick={() => removeModel(m)}>
+                      <X className="size-3" />
+                    </button>
+                  )}
                 </Badge>
               ))}
             </div>
           )}
           <div className="flex flex-wrap gap-1.5">
             {availablePresets.map(p => (
-              <Button key={p.glob} size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => addModel(p.glob)}>
+              <Button key={p.glob} size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={readOnly} onClick={() => addModel(p.glob)}>
                 <Plus className="size-3" /> {p.label}
               </Button>
             ))}
@@ -182,7 +282,7 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
               <p className="text-[11px] text-muted-foreground">Seen in your traffic — click to route the exact model:</p>
               <div className="flex flex-wrap gap-1.5">
                 {availableObserved.map(m => (
-                  <Button key={m} size="sm" variant="ghost" className="h-6 max-w-full px-2 font-mono text-[11px]" title={m} onClick={() => addModel(m)}>
+                  <Button key={m} size="sm" variant="ghost" className="h-6 max-w-full px-2 font-mono text-[11px]" title={m} disabled={readOnly} onClick={() => addModel(m)}>
                     <span className="truncate">{m}</span>
                   </Button>
                 ))}
@@ -194,10 +294,11 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
               value={custom}
               placeholder="custom glob, e.g. claude-3-*"
               className="h-7 min-w-0 flex-1 font-mono text-[11px]"
+              disabled={readOnly}
               onChange={e => setCustom(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { addModel(custom); setCustom('') } }}
             />
-            <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={() => { addModel(custom); setCustom('') }} disabled={!custom.trim()}>
+            <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={() => { addModel(custom); setCustom('') }} disabled={readOnly || !custom.trim()}>
               Add
             </Button>
           </div>
@@ -219,6 +320,7 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
                     variant={on ? 'default' : 'outline'}
                     className="h-7 max-w-full px-2 font-mono text-[11px]"
                     title={`${a.name}${a.org ? ` (${a.org})` : ''} · ${a.type}`}
+                    disabled={readOnly}
                     onClick={() => toggleAccount(a.name)}
                   >
                     <span className="truncate">{a.name}</span>
@@ -241,7 +343,7 @@ function RouteEditor({ route, accounts, observed, onChange, onRemove }: {
             <div className="space-y-1 pt-1.5">
               <Label className="font-mono text-[10px] font-medium tracking-[0.1em] uppercase text-muted-foreground">Quota bucket (optional)</Label>
               <Input value={route.bucket ?? ''} placeholder="leave empty unless you know you need it" className="h-7 text-[11px]"
-                onChange={e => onChange({ bucket: e.target.value })} />
+                disabled={readOnly} onChange={e => onChange({ bucket: e.target.value })} />
               <p className="text-[11px] text-muted-foreground">Overrides which quota window this route counts against. Most setups leave this blank.</p>
             </div>
           )}

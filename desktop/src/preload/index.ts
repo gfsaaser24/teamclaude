@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { TcRouteDTO } from '../main/proxy-client'
 
 function on(channel: string) {
   return (cb: (payload: never) => void): (() => void) => {
@@ -27,7 +28,11 @@ const tc = {
     onEvent: on('tc:event'),
   },
   account: {
+    // token: stable id when known, else account name (server dual-accepts).
     pin: (token: string | null) => ipcRenderer.invoke('tc:account:pin', token),
+    // target: stable id when known, else name. Endpoint-backed (POST /account).
+    set: (target: string, patch: { disabled?: boolean; priority?: number }) =>
+      ipcRenderer.invoke('tc:account:set', target, patch),
   },
   install: {
     status: () => ipcRenderer.invoke('tc:install:status'),
@@ -36,11 +41,14 @@ const tc = {
   },
   config: {
     get: () => ipcRenderer.invoke('tc:config:get'),
-    setAccountDisabled: (name: string, disabled: boolean) => ipcRenderer.invoke('tc:config:setAccountDisabled', name, disabled),
-    setAccountPriority: (name: string, priority: number) => ipcRenderer.invoke('tc:config:setAccountPriority', name, priority),
     removeAccount: (name: string) => ipcRenderer.invoke('tc:config:removeAccount', name),
-    setRoutes: (routes: unknown[]) => ipcRenderer.invoke('tc:config:setRoutes', routes),
     setSx: (sx: { apiKey?: string; mode: string }) => ipcRenderer.invoke('tc:config:setSx', sx),
+  },
+  // Route config via the Phase-0 endpoints (GET/POST /teamclaude/routes) — the
+  // only route path; never a config-file write, never the /status DTO.
+  routes: {
+    get: () => ipcRenderer.invoke('tc:routes:get') as Promise<{ supported: boolean; routes: TcRouteDTO[] }>,
+    set: (routes: TcRouteDTO[]) => ipcRenderer.invoke('tc:routes:set', routes) as Promise<{ ok: boolean; supported: boolean; error?: string }>,
   },
   launcher: {
     list: () => ipcRenderer.invoke('tc:launcher:list'),

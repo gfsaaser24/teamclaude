@@ -14,11 +14,18 @@ export default function Accounts(): React.JSX.Element {
   const accounts = (config as { accounts?: { name: string; type: string; orgName?: string | null; priority?: number; disabled?: boolean }[] } | null)?.accounts ?? []
   // Live per-account health comes from the STORE status, not the redacted config. Cross-reference by name.
   const statusOf = (name: string): string | undefined => status?.accounts?.find(a => a.name === name)?.status
+  // Stable account id from the live status (Phase-0 §5b). Mutations target the id
+  // when present and fall back to the name against an older server.
+  const idOf = (name: string): string => status?.accounts?.find(a => a.name === name)?.id ?? name
   // The hand-pinned account (null = auto-rotation) comes from the live status too.
   const pinnedName = status?.manualAccount ?? null
   const pin = async (name: string | null): Promise<void> => {
-    await window.tc.account.pin(name)
+    await window.tc.account.pin(name == null ? null : idOf(name))
     await refreshStatus()
+  }
+  const setAccount = async (name: string, patch: { disabled?: boolean; priority?: number }): Promise<void> => {
+    await window.tc.account.set(idOf(name), patch)
+    await Promise.all([refreshConfig(), refreshStatus()])
   }
 
   const lastOauth = [...events].reverse().find((e: TcEvent) => e.type.startsWith('oauth-'))
@@ -87,13 +94,13 @@ export default function Accounts(): React.JSX.Element {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <label className="flex shrink-0 items-center gap-2 text-xs">
                 <Switch checked={!a.disabled}
-                  onCheckedChange={async v => { await window.tc.config.setAccountDisabled(a.name, !v); await refreshConfig() }} />
+                  onCheckedChange={v => void setAccount(a.name, { disabled: !v })} />
                 enabled
               </label>
               <label className="flex shrink-0 items-center gap-2 text-xs">
                 priority
                 <Input type="number" defaultValue={a.priority ?? 0} className="h-7 w-16"
-                  onBlur={async e => { await window.tc.config.setAccountPriority(a.name, Number(e.target.value) || 0); await refreshConfig() }} />
+                  onBlur={e => void setAccount(a.name, { priority: Number(e.target.value) || 0 })} />
               </label>
               <div className="ml-auto flex shrink-0 items-center gap-1">
                 {pinnedName === a.name ? (

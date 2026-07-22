@@ -101,6 +101,10 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
   const dot = STATE_DOT[proxyState] ?? STATE_DOT.stopped
   const meta = `port ${status.server?.port ?? '—'} · up ${uptime}m · ${recentEnds.length} req`
 
+  // Pin by stable account id when the server exposes one (Phase-0 §5b), name
+  // fallback. Select values stay names (so the controlled value still matches
+  // manualAccount); the token is resolved to an id only at the network call.
+  const pinToken = (name: string): string => accounts.find(a => a.name === name)?.id ?? name
   // Manual pin/cycle: prev/next wraps the accounts array, seeded from the
   // current pin (manualAccount) or, when auto-rotating, the live currentAccount.
   const pinned = status.manualAccount != null
@@ -109,7 +113,7 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
     const cur = accounts.findIndex(a => a.name === (status.manualAccount ?? status.currentAccount))
     const base = cur >= 0 ? cur : 0
     const next = (base + dir + accounts.length) % accounts.length
-    await window.tc.account.pin(accounts[next].name)
+    await window.tc.account.pin(accounts[next].id ?? accounts[next].name)
     await refreshStatus()
   }
   const goAuto = async (): Promise<void> => {
@@ -118,7 +122,7 @@ export default function Dashboard({ compact = false }: { compact?: boolean }): R
   }
   // Direct switcher: pick any account (pin) or return to auto-rotation.
   const pick = async (v: string): Promise<void> => {
-    await window.tc.account.pin(v === AUTO ? null : v)
+    await window.tc.account.pin(v === AUTO ? null : pinToken(v))
     await refreshStatus()
   }
 

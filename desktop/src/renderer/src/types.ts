@@ -2,6 +2,9 @@ export interface TcEvent { id: number; type: string; ts: number; [k: string]: un
 export interface TcAccountStatus {
   name: string; type: string; orgName: string | null; priority: number
   disabled: boolean; status: string
+  // Phase-0 §5b identity fields: stable account id (UUID+org) + email. Present
+  // on newer servers; undefined against an older one (fall back to name).
+  id?: string; email?: string
   quota: {
     unified5h: number | null; unified5hReset: number | null
     unified7d: number | null; unified7dReset: number | null
