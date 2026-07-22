@@ -9,6 +9,7 @@ import { createProxyServer } from './server.js';
 import { importCredentials, loginOAuth, fetchProfile, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
 import { sameIdentity, orgKey, matchAccounts } from './identity.js';
 import * as alias from './alias.js';
+import { shimCommand } from './shim.js';
 import { ensureCerts } from './mitm.js';
 import { Prober } from './prober.js';
 import { Warmer } from './warmer.js';
@@ -70,6 +71,10 @@ switch (command) {
     break;
   case 'alias':
     aliasCommand();
+    process.exit(0);
+    break;
+  case 'shim':
+    shimCommand(args[1]);
     process.exit(0);
     break;
   case 'probe':
@@ -620,15 +625,30 @@ async function runCommand() {
   const sep = rest.indexOf('--');
   const tcFlags = sep >= 0 ? rest.slice(0, sep) : rest;
   const useMitm = !tcFlags.includes('--no-mitm');
+  // --exec <cmd> runs another launcher (e.g. happy) with the same routed env
+  // instead of claude itself — for wrappers that spawn claude on their own and
+  // pass their environment through to it.
+  const execIdx = tcFlags.indexOf('--exec');
+  const execCmd = execIdx >= 0 ? tcFlags[execIdx + 1] : 'claude';
+  if (execIdx >= 0 && !execCmd) {
+    console.error('run: --exec requires a command name');
+    process.exit(1);
+  }
   const claudeArgs = sep >= 0
     ? rest.slice(sep + 1)
-    : rest.filter(a => a !== '--mitm' && a !== '--no-mitm');
+    : rest.filter((a, i) => a !== '--mitm' && a !== '--no-mitm'
+        && a !== '--exec' && !(execIdx >= 0 && i === execIdx + 1));
 
   // Route through the proxy only when it's actually up; otherwise launch claude
   // directly so a stopped proxy doesn't break `claude`. This is what lets the
   // shell alias (`claude='teamclaude run --'`) be a dumb passthrough.
   const port = config.proxy.port;
   const env = { ...process.env };
+  // Recursion guard for the Windows PATH shim (src/shim.js): we spawn `claude`
+  // by name below, which resolves to the shim when it's installed; the guard
+  // makes the shim exec the real binary instead of looping back into `run`.
+  // Set on the fallback path too — an unguarded shim would loop forever there.
+  env.TEAMCLAUDE_RUN_GUARD = '1';
   if (await isProxyUp(port)) {
     if (useMitm) {
       // Route ALL of claude's traffic through us as an HTTPS forward proxy, so
@@ -648,11 +668,16 @@ async function runCommand() {
       env.ANTHROPIC_BASE_URL = `http://localhost:${port}`;
     }
   } else {
-    console.error(`[TeamClaude] Proxy not running on port ${port} — launching claude directly (start it with: teamclaude server)`);
+    console.error(`[TeamClaude] Proxy not running on port ${port} — launching ${execCmd} directly (start it with: teamclaude server)`);
+    // A globally-set AutoRoute ANTHROPIC_BASE_URL points at the proxy we just
+    // found dead — drop it so the direct launch actually works.
+    if ((env.ANTHROPIC_BASE_URL || '').match(new RegExp(`^https?://(localhost|127\\.0\\.0\\.1):${port}/?$`))) {
+      delete env.ANTHROPIC_BASE_URL;
+    }
   }
 
   // Use spawnSync so the Node process blocks entirely — behaves like execvp.
-  const result = spawnSync('claude', claudeArgs, {
+  const result = spawnSync(execCmd, claudeArgs, {
     stdio: 'inherit',
     shell: process.platform === 'win32',
     env,
@@ -660,9 +685,9 @@ async function runCommand() {
 
   if (result.error) {
     if (result.error.code === 'ENOENT') {
-      console.error('Claude Code not found in PATH. Install it first.');
+      console.error(`${execCmd} not found in PATH. Install it first.`);
     } else {
-      console.error(`Failed to start claude: ${result.error.message}`);
+      console.error(`Failed to start ${execCmd}: ${result.error.message}`);
     }
     process.exit(1);
   }
@@ -1186,13 +1211,16 @@ Commands:
   login               OAuth login via browser
   login --api         Add an API key account
   env                 Print env vars to use with Claude
-  run [--no-mitm] [-- args...]
+  run [--no-mitm] [--exec CMD] [-- args...]
                       Run Claude Code through the proxy (direct if it's down).
                       Routes via an HTTPS forward proxy + local CA by default, so
                       even hardcoded api.anthropic.com endpoints are intercepted;
                       --no-mitm uses base-URL routing only
   alias               Print a shell alias so plain 'claude' routes via the proxy
                       (--install to write it to your shell rc; --uninstall to remove)
+  shim [sub]          Windows: PATH shim so bare 'claude' routes via the proxy
+                      everywhere — editors and spawned processes included
+                      (install|uninstall|status; default: status)
   status [--json]     Show rich proxy/account/probe status (live)
                       Use --color=always|never to control ANSI colors
   accounts            List configured accounts
