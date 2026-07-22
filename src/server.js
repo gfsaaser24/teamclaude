@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { ensureCerts, createConnectHandler } from './mitm.js';
 import { patchAccountUuid } from './account-uuid-rewrite.js';
 import { parseRequestModel, normalizeRoutesInput } from './account-manager.js';
+import { accountMatchesRef } from './identity.js';
 import { TopLevelFieldFinder } from './model.js';
 import { BodyWriter } from './request-log.js';
 import { upstreamFetch } from './upstream-fetch.js';
@@ -69,11 +70,26 @@ export function isMutationRequest(method, url) {
     || /^\/teamclaude\/pin(?:\/.*)?$/.test(u);
 }
 
+// A control-endpoint body is small JSON (routes/account flags). Cap it at 1 MB so
+// a hostile or buggy client can't force the server to buffer an unbounded body in
+// memory. Over the cap, readJsonBody throws BODY_TOO_LARGE → the caller returns 413.
+const MAX_CONTROL_BODY_BYTES = 1024 * 1024;
+
 // Read and JSON-parse a control-endpoint request body. An empty body is {} so a
-// bare POST is valid; a malformed body throws (the caller returns 400).
+// bare POST is valid; a malformed body throws (the caller returns 400); a body
+// over MAX_CONTROL_BODY_BYTES throws BODY_TOO_LARGE (the caller returns 413).
 async function readJsonBody(req) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
+  let total = 0;
+  for await (const c of req) {
+    total += c.length;
+    if (total > MAX_CONTROL_BODY_BYTES) {
+      const err = new Error('request body too large');
+      err.code = 'BODY_TOO_LARGE';
+      throw err;
+    }
+    chunks.push(c);
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw.trim()) return {};
   return JSON.parse(raw);
@@ -82,6 +98,16 @@ async function readJsonBody(req) {
 function sendJson(res, status, obj) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(obj));
+}
+
+// Reject an over-cap control body with 413. The request body was only partially
+// read (readJsonBody bailed at the cap), so drain-and-discard the rest without
+// buffering and close the connection — otherwise the unread upload would stall
+// the socket or the client would see a reset instead of the 413.
+function sendBodyTooLarge(req, res) {
+  req.resume();
+  res.writeHead(413, { 'Content-Type': 'application/json', 'Connection': 'close' });
+  res.end(JSON.stringify({ ok: false, error: 'body too large' }));
 }
 
 export function createProxyServer(accountManager, config, hooks = {}, sx = null) {
@@ -160,7 +186,10 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         if (!hooks.setRoutes) { sendJson(res, 501, { ok: false, error: 'routes not supported' }); return; }
         let payload;
         try { payload = await readJsonBody(req); }
-        catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+        catch (err) {
+          if (err?.code === 'BODY_TOO_LARGE') { sendBodyTooLarge(req, res); return; }
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return;
+        }
         let normalized;
         try { normalized = normalizeRoutesInput(payload?.routes, accountManager.accounts); }
         catch (err) { sendJson(res, 400, { ok: false, error: err.message }); return; }
@@ -179,14 +208,20 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         if (!hooks.setAccount) { sendJson(res, 501, { ok: false, error: 'account control not supported' }); return; }
         let payload;
         try { payload = await readJsonBody(req); }
-        catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+        catch (err) {
+          if (err?.code === 'BODY_TOO_LARGE') { sendBodyTooLarge(req, res); return; }
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return;
+        }
         const id = payload?.id;
         if (typeof id !== 'string' || !id.trim()) { sendJson(res, 400, { ok: false, error: 'id (string) is required' }); return; }
         if (payload.disabled != null && typeof payload.disabled !== 'boolean') { sendJson(res, 400, { ok: false, error: 'disabled must be a boolean' }); return; }
         if (payload.priority != null && (typeof payload.priority !== 'number' || !Number.isFinite(payload.priority))) { sendJson(res, 400, { ok: false, error: 'priority must be a finite number' }); return; }
         try {
           const result = await hooks.setAccount({ id: id.trim(), disabled: payload.disabled, priority: payload.priority });
-          if (!result) { sendJson(res, 404, { ok: false, error: `no account matching id "${id.trim()}"` }); return; }
+          // Unknown id → 400 unknown_account, NOT 404. The desktop treats a 404 on
+          // this endpoint as "endpoint unsupported" and silently falls back to a
+          // legacy config write; a real "no such account" must surface as an error.
+          if (!result) { sendJson(res, 400, { ok: false, error: 'unknown_account' }); return; }
           sendJson(res, 200, { ok: true, account: result });
         } catch (err) {
           sendJson(res, 500, { ok: false, error: err.message });
@@ -257,9 +292,18 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
             return;
           }
           const token = m[1] != null ? decodeURIComponent(m[1]) : null;
-          const active = hooks.pinAccount(token);
+          const result = hooks.pinAccount(token);
+          // A non-null token that matches no account is an honest failure: 400
+          // unknown_account, never a 200 {ok:true} that lies the pin took effect.
+          // 404 is reserved for "endpoint unsupported" (the desktop's fallback
+          // trigger), so an unknown pin target is 400 like the account endpoint.
+          if (token != null && result && result.ok === false) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'unknown_account' }));
+            return;
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, active }));
+          res.end(JSON.stringify({ ok: true, active: result?.active ?? null }));
           return;
         }
       }
@@ -306,11 +350,12 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
  * and the proxy-API-key gate live in the base server's wrapper, not here.
  */
 // Resolve an account-pin token (from a `/tc-acct/<token>` URL) to an account
-// index, or null if it matches nothing. Matches by exact account name first,
-// then by numeric index. Exported for tests.
+// index, or null if it matches nothing. Matches by stable id or exact account
+// name (accountMatchesRef) first, then by numeric index — a name/id that looks
+// numeric still wins over the positional index. Exported for tests.
 export function resolveAccountPin(accountManager, token) {
-  const byName = accountManager.accounts.findIndex(a => a.name === token);
-  if (byName >= 0) return byName;
+  const byRef = accountManager.accounts.findIndex(a => accountMatchesRef(a, token));
+  if (byRef >= 0) return byRef;
   if (/^\d+$/.test(token)) {
     const i = Number(token);
     if (i >= 0 && i < accountManager.accounts.length) return i;

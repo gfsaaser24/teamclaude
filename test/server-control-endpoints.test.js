@@ -30,6 +30,17 @@ function controlHooks(am) {
       if (priority != null) mgr.priority = priority;
       return { id: accountStableId(mgr), name: mgr.name, disabled: mgr.disabled || false, priority: mgr.priority || 0 };
     },
+    // Mirrors index.js hooks.pinAccount: null token clears; an unknown token sets
+    // no pin and signals {ok:false} so the endpoint returns 400 unknown_account.
+    pinAccount: (token) => {
+      if (token == null) {
+        am.clearManualAccount();
+      } else if (am.setManualAccount(token) == null) {
+        return { ok: false, active: am.accounts[am.currentIndex]?.name ?? null };
+      }
+      am.selectActiveAccount();
+      return { ok: true, active: am.accounts[am.currentIndex]?.name ?? null };
+    },
   };
 }
 
@@ -148,12 +159,18 @@ test('POST /teamclaude/account accepts a plain name (deprecation window) and set
   });
 });
 
-test('POST /teamclaude/account returns 404 for an unknown id', async () => {
-  await withServer(controlHooks, async ({ port }) => {
+// Unknown id → 400 unknown_account, NOT 404. The desktop reads a 404 on this
+// endpoint as "endpoint unsupported" and falls back to a legacy config write; a
+// real "no such account" must surface as an error, so it is 400.
+test('POST /teamclaude/account returns 400 unknown_account for an unknown id (never 404)', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
     const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
       method: 'POST', headers: KEY, body: JSON.stringify({ id: 'ghost', disabled: true }),
     });
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, 'unknown_account');
+    // No account was touched.
+    assert.equal(am.accounts.some(a => a.disabled), false);
   });
 });
 
@@ -191,5 +208,134 @@ test('a wrong key on a mutation is rejected 401 even from loopback', async () =>
       method: 'POST', headers: { 'x-api-key': 'wrong', 'content-type': 'application/json' }, body: JSON.stringify({ id: 'beta' }),
     });
     assert.equal(res.status, 401);
+  });
+});
+
+// ── POST /teamclaude/account accepts a stable id ─────────────────────────────
+
+test('POST /teamclaude/account resolves a stable id and applies live', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const id = accountStableId(am.accounts[0]); // 'u-alpha::o1'
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST', headers: KEY, body: JSON.stringify({ id, priority: 7 }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(am.accounts[0].priority, 7);
+  });
+});
+
+// ── POST /teamclaude/pin ─────────────────────────────────────────────────────
+
+test('POST /teamclaude/pin/<stable-id> pins by id and returns the active account', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const id = accountStableId(am.accounts[0]); // 'u-alpha::o1'
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/pin/${encodeURIComponent(id)}`, { method: 'POST', headers: KEY });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.active, 'alpha');
+    assert.equal(am.manualIndex, 0);
+  });
+});
+
+test('POST /teamclaude/pin/<name> pins by name too', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/pin/beta`, { method: 'POST', headers: KEY });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).active, 'beta');
+    assert.equal(am.manualIndex, 1);
+  });
+});
+
+test('POST /teamclaude/pin/<unknown> returns 400 unknown_account and sets no pin', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/pin/ghost`, { method: 'POST', headers: KEY });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, 'unknown_account');
+    assert.equal(am.manualIndex, null); // no pin was set (no lie of success)
+  });
+});
+
+test('POST /teamclaude/pin (no token) clears the pin with 200', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    am.setManualAccount('beta');
+    assert.equal(am.manualIndex, 1);
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/pin`, { method: 'POST', headers: KEY });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).ok, true);
+    assert.equal(am.manualIndex, null);
+  });
+});
+
+// ── body cap (413) ───────────────────────────────────────────────────────────
+
+test('POST /teamclaude/account rejects a body over 1 MB with 413', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    // ~1.5 MB of JSON — over the 1 MB control-body cap.
+    const big = JSON.stringify({ id: 'beta', pad: 'x'.repeat(1_500_000) });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST', headers: KEY, body: big,
+    });
+    assert.equal(res.status, 413);
+    assert.equal(am.accounts[1].priority ?? 0, 0); // nothing applied
+  });
+});
+
+test('POST /teamclaude/routes rejects a body over 1 MB with 413', async () => {
+  await withServer(controlHooks, async ({ port }) => {
+    const big = JSON.stringify({ routes: [], pad: 'x'.repeat(1_500_000) });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/routes`, {
+      method: 'POST', headers: KEY, body: big,
+    });
+    assert.equal(res.status, 413);
+  });
+});
+
+// ── disk-failure ordering (item 5c) ──────────────────────────────────────────
+
+// Mirror index.js's setAccount write-order (persist to disk FIRST, then apply
+// live) with a spy atomicConfigUpdate that throws — proving the endpoint returns
+// 500 and the live AccountManager is left untouched (no live-but-not-persisted
+// divergence). A passing variant proves live state IS applied after disk commits.
+function orderingHooks(am, atomicConfigUpdate) {
+  return {
+    setAccount: async ({ id, disabled, priority }) => {
+      const idx = am.accounts.findIndex(a => accountStableId(a) === id || a.name === id);
+      if (idx < 0) return null;
+      const mgr = am.accounts[idx];
+      await atomicConfigUpdate(); // disk FIRST — throws here abort before live apply
+      if (disabled != null) am.setDisabled(idx, disabled);
+      if (priority != null) mgr.priority = priority;
+      return { id: accountStableId(mgr), name: mgr.name, disabled: mgr.disabled || false, priority: mgr.priority || 0 };
+    },
+  };
+}
+
+test('POST /teamclaude/account returns 500 and leaves live state untouched when the disk write fails', async () => {
+  let called = 0;
+  const failingDisk = async () => { called++; throw new Error('disk full'); };
+  await withServer((am) => orderingHooks(am, failingDisk), async ({ port, am }) => {
+    const id = accountStableId(am.accounts[0]);
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST', headers: KEY, body: JSON.stringify({ id, disabled: true, priority: 5 }),
+    });
+    assert.equal(res.status, 500);
+    assert.equal(called, 1);
+    assert.equal(am.accounts[0].disabled ?? false, false); // live NOT mutated
+    assert.equal(am.accounts[0].priority ?? 0, 0);
+  });
+});
+
+test('POST /teamclaude/account applies live state only after the disk write commits', async () => {
+  const order = [];
+  const okDisk = async () => { order.push('disk'); };
+  await withServer((am) => orderingHooks(am, okDisk), async ({ port, am }) => {
+    const id = accountStableId(am.accounts[0]);
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST', headers: KEY, body: JSON.stringify({ id, priority: 5 }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(order, ['disk']); // disk ran (before the live apply below)
+    assert.equal(am.accounts[0].priority, 5);
   });
 });

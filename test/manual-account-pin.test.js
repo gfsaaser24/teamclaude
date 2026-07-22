@@ -27,6 +27,20 @@ test('setManualAccount pins by numeric index too', () => {
   assert.equal(am.getActiveAccount().name, 'b');
 });
 
+test('setManualAccount pins by stable id (accountUuid::org) too', () => {
+  const am = new AccountManager([
+    oauth('a', { accountUuid: 'u-a', orgUuid: 'o1' }),
+    oauth('b', { accountUuid: 'u-b', orgUuid: 'o2' }),
+  ], 0.98);
+  assert.equal(am.setManualAccount('u-b::o2'), 'b');
+  assert.equal(am.manualIndex, 1);
+  assert.equal(am.getActiveAccount().name, 'b');
+  // An unknown stable id sets no pin.
+  const am2 = new AccountManager([oauth('a', { accountUuid: 'u-a', orgUuid: 'o1' })], 0.98);
+  assert.equal(am2.setManualAccount('u-ghost::o9'), null);
+  assert.equal(am2.manualIndex, null);
+});
+
 test('a pinned account that is excluded this request falls through to another account', () => {
   const am = new AccountManager([oauth('a'), oauth('b'), oauth('c')], 0.98);
   am.setManualAccount('b'); // index 1

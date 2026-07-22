@@ -35,6 +35,19 @@ test('a name that looks numeric is matched as a name before falling back to inde
   assert.equal(resolveAccountPin(am, '0'), 1);
 });
 
+test('resolveAccountPin also matches by stable id (accountUuid::org)', () => {
+  const am = new AccountManager([
+    { ...oauth('alpha'), accountUuid: 'u-alpha', orgUuid: 'o1' },
+    { ...oauth('beta'), accountUuid: 'u-beta', orgUuid: 'o2' },
+  ], 0.98);
+  assert.equal(resolveAccountPin(am, 'u-alpha::o1'), 0);
+  assert.equal(resolveAccountPin(am, 'u-beta::o2'), 1);
+  // Name still works alongside the stable id.
+  assert.equal(resolveAccountPin(am, 'beta'), 1);
+  // An unknown stable id matches nothing.
+  assert.equal(resolveAccountPin(am, 'u-ghost::o9'), null);
+});
+
 // ── end-to-end pin routing (integration) ─────────────────────────────────────
 
 // Stand up a mock upstream that records the path and Authorization it received,

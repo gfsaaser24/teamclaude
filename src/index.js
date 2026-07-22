@@ -325,10 +325,15 @@ async function serverCommand() {
   // Manual account pin: hand-pick the active account (null clears → full auto).
   // Re-run selection so a cleared pin lands on the best auto choice immediately.
   hooks.pinAccount = (token) => {
-    if (token == null) { accountManager.clearManualAccount(); }
-    else { accountManager.setManualAccount(token); }
+    if (token == null) {
+      accountManager.clearManualAccount();
+    } else if (accountManager.setManualAccount(token) == null) {
+      // Unknown pin target: no pin was set. Signal failure so the endpoint can
+      // return 400 unknown_account rather than a 200 that lies the pin took.
+      return { ok: false, active: accountManager.accounts[accountManager.currentIndex]?.name ?? null };
+    }
     accountManager.selectActiveAccount();
-    return accountManager.accounts[accountManager.currentIndex]?.name ?? null;
+    return { ok: true, active: accountManager.accounts[accountManager.currentIndex]?.name ?? null };
   };
   hooks.handleEvents = (req, res) => hub.handleSSE(req, res);
   hooks.getRecentEvents = () => hub.recent();
@@ -350,20 +355,25 @@ async function serverCommand() {
     const idx = accountManager.accounts.findIndex(a => accountStableId(a) === id || a.name === id);
     if (idx < 0) return null;
     const mgr = accountManager.accounts[idx];
-    if (disabled != null) accountManager.setDisabled(idx, disabled);
-    if (priority != null) mgr.priority = priority;
-    // Keep the in-memory config copy in step so a later TUI/save doesn't revert it.
-    const memIdx = config.accounts.findIndex(a => sameIdentity(a, mgr) || a.name === mgr.name);
-    if (memIdx >= 0) {
-      if (disabled != null) { if (disabled) config.accounts[memIdx].disabled = true; else delete config.accounts[memIdx].disabled; }
-      if (priority != null) config.accounts[memIdx].priority = priority;
-    }
+    // Write-order (item 5c): persist to disk FIRST. If atomicConfigUpdate throws
+    // (disk failure), it propagates before any live state is touched, so the
+    // endpoint returns 500 with the AccountManager and in-memory config unchanged
+    // — no persisted-but-not-live (or live-but-not-persisted) divergence.
     await atomicConfigUpdate(diskConfig => {
       const cfgIdx = diskConfig.accounts.findIndex(a => sameIdentity(a, mgr) || a.name === mgr.name);
       if (cfgIdx < 0) return;
       if (disabled != null) { if (disabled) diskConfig.accounts[cfgIdx].disabled = true; else delete diskConfig.accounts[cfgIdx].disabled; }
       if (priority != null) diskConfig.accounts[cfgIdx].priority = priority;
     });
+    // Disk committed — now apply live state and keep the in-memory config copy in
+    // step so a later TUI/save doesn't revert it.
+    if (disabled != null) accountManager.setDisabled(idx, disabled);
+    if (priority != null) mgr.priority = priority;
+    const memIdx = config.accounts.findIndex(a => sameIdentity(a, mgr) || a.name === mgr.name);
+    if (memIdx >= 0) {
+      if (disabled != null) { if (disabled) config.accounts[memIdx].disabled = true; else delete config.accounts[memIdx].disabled; }
+      if (priority != null) config.accounts[memIdx].priority = priority;
+    }
     return { id: accountStableId(mgr), name: mgr.name, disabled: mgr.disabled || false, priority: mgr.priority || 0 };
   };
 

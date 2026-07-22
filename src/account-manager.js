@@ -1,5 +1,5 @@
 import { refreshAccessToken, isTokenExpiringSoon, isTokenExpired } from './oauth.js';
-import { sameIdentity, accountStableId, emailOf } from './identity.js';
+import { sameIdentity, accountStableId, accountMatchesRef, emailOf } from './identity.js';
 import { weeklyBucketForModel, modelGlobMatches } from './model.js';
 
 // Bucket keys stamped with an `observedAt` time when their utilization is
@@ -259,9 +259,9 @@ export class AccountManager {
     return account;
   }
 
-  /** Pin the active account by name or numeric index. Returns the pinned account name, or null if not found. */
+  /** Pin the active account by stable id, name, or numeric index. Returns the pinned account name, or null if not found. */
   setManualAccount(token) {
-    let idx = this.accounts.findIndex(a => a.name === token);
+    let idx = this.accounts.findIndex(a => accountMatchesRef(a, token));
     if (idx < 0 && /^\d+$/.test(String(token))) {
       const n = Number(token);
       if (n >= 0 && n < this.accounts.length) idx = n;
