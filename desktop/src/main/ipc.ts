@@ -170,21 +170,22 @@ export function registerIpc(deps: IpcDeps): () => void {
     const cfg = await readTeamclaudeConfig()
     return cfg ? redactConfig(cfg) : null
   })
-  ipcMain.handle('tc:config:setAccountDisabled', async (_e, name: string, disabled: boolean) => {
+  // Account disable/priority → POST /teamclaude/account, targeting the stable id
+  // when the caller has one (name fallback). Per Phase-0 §5c the endpoint applies
+  // disk + runtime atomically before returning 200, so no extra reload. Against
+  // an OLDER server without the endpoint (404 → supported:false) we fall back to
+  // the previous direct config write, keyed by name (old servers have no id).
+  ipcMain.handle('tc:account:set', async (_e, target: string, patch: { disabled?: boolean; priority?: number }) => {
+    const r = await client.setAccount(target, patch)
+    if (r.supported) return r
     await updateTeamclaudeConfig(cfg => {
-      const a = cfg.accounts.find(x => x.name === name)
-      if (!a) throw new Error(`No account named "${name}"`)
-      if (disabled) a.disabled = true; else delete a.disabled
+      const a = cfg.accounts.find(x => x.name === target)
+      if (!a) throw new Error(`No account named "${target}"`)
+      if (patch.disabled !== undefined) { if (patch.disabled) a.disabled = true; else delete a.disabled }
+      if (patch.priority !== undefined) a.priority = patch.priority
     })
     await client.reload()
-  })
-  ipcMain.handle('tc:config:setAccountPriority', async (_e, name: string, priority: number) => {
-    await updateTeamclaudeConfig(cfg => {
-      const a = cfg.accounts.find(x => x.name === name)
-      if (!a) throw new Error(`No account named "${name}"`)
-      a.priority = priority
-    })
-    await client.reload()
+    return { ok: true, supported: false }
   })
   ipcMain.handle('tc:config:removeAccount', async (_e, name: string) => {
     await updateTeamclaudeConfig(cfg => {
@@ -192,10 +193,11 @@ export function registerIpc(deps: IpcDeps): () => void {
     })
     await supervisor.restart()   // removals don't apply via reload (see src/index.js notifyRunningServer docs)
   })
-  ipcMain.handle('tc:config:setRoutes', async (_e, routes: TcRoute[]) => {
-    await updateTeamclaudeConfig(cfg => { cfg.routes = routes })
-    await client.reload()
-  })
+  // Routes read/write go through the dedicated Phase-0 endpoints ONLY — never a
+  // config-file write, never the /status display DTO. That closes the B5
+  // corruption loop where {name,eligible} objects were written back as accounts.
+  ipcMain.handle('tc:routes:get', () => client.getRoutes())
+  ipcMain.handle('tc:routes:set', (_e, routes: TcRoute[]) => client.setRoutes(routes))
   ipcMain.handle('tc:config:setSx', async (_e, sx: { apiKey?: string; mode: string }) => {
     await updateTeamclaudeConfig(cfg => {
       const mode = sx.mode
