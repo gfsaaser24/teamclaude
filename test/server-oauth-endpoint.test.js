@@ -21,7 +21,7 @@ test('POST /teamclaude/oauth/login starts the flow and returns 202', async () =>
   const proxy = makeProxy({ oauthLogin: async () => { calls++; return { started: true }; } });
   const port = await listen(proxy);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/oauth/login`, { method: 'POST' });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/oauth/login`, { method: 'POST', headers: { 'x-api-key': 'k' } });
     assert.equal(res.status, 202);
     const data = await res.json();
     assert.equal(data.ok, true);
@@ -34,7 +34,7 @@ test('POST /teamclaude/oauth/login returns 409 when already in flight', async ()
   const proxy = makeProxy({ oauthLogin: async () => { throw new Error('An OAuth login is already in progress'); } });
   const port = await listen(proxy);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/oauth/login`, { method: 'POST' });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/oauth/login`, { method: 'POST', headers: { 'x-api-key': 'k' } });
     assert.equal(res.status, 409);
     const data = await res.json();
     assert.equal(data.ok, false);
@@ -46,7 +46,7 @@ test('POST /teamclaude/oauth/login without hook returns 501', async () => {
   const proxy = makeProxy({});
   const port = await listen(proxy);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/oauth/login`, { method: 'POST' });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/oauth/login`, { method: 'POST', headers: { 'x-api-key': 'k' } });
     assert.equal(res.status, 501);
   } finally { proxy.close(); }
 });

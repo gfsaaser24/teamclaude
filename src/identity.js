@@ -17,6 +17,29 @@ export function orgKey(acct) {
 }
 
 /**
+ * Stable, machine-usable identifier for an account — the account UUID (the
+ * *person*) plus its org discriminator, so multi-org logins stay distinct.
+ * API-key accounts (and any not-yet-profiled OAuth entry with no UUID) fall back
+ * to a name-scoped id. This is the id mutation endpoints target by: names
+ * collide across orgs and indices shift after a removal, but this id is stable.
+ */
+export function accountStableId(acct) {
+  if (acct?.accountUuid) return `${acct.accountUuid}::${orgKey(acct) || ''}`;
+  return `name:${acct?.name ?? ''}`;
+}
+
+/**
+ * Whether a route/mutation account *reference* (a stable id or a plain-string
+ * name — the two forms accepted during the id-migration deprecation window)
+ * names this account. Numeric-index matching is intentionally NOT here; callers
+ * that still honor legacy index refs add that themselves.
+ */
+export function accountMatchesRef(acct, ref) {
+  if (typeof ref !== 'string' || !acct) return false;
+  return ref === acct.name || ref === accountStableId(acct);
+}
+
+/**
  * Whether two account records refer to the same account+org.
  *
  * - Both have an accountUuid: it must match. If both org keys are known they

@@ -2,12 +2,13 @@
 
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath, loadState, saveState } from './config.js';
-import { AccountManager } from './account-manager.js';
-import { createProxyServer } from './server.js';
+import { AccountManager, migrateCorruptRoutes } from './account-manager.js';
+import { createProxyServer, SERVER_CAPABILITIES } from './server.js';
 import { importCredentials, loginOAuth, fetchProfile, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
-import { sameIdentity, orgKey, matchAccounts } from './identity.js';
+import { sameIdentity, orgKey, matchAccounts, accountStableId } from './identity.js';
 import * as alias from './alias.js';
 import { shimCommand } from './shim.js';
 import { ensureCerts } from './mitm.js';
@@ -120,24 +121,37 @@ switch (command) {
 
 async function serverCommand() {
   const config = await loadOrCreateConfig();
+  const headless = args.includes('--headless') || args.includes('--no-tui');
 
   // --log-to <dir>
   const logTo = argValue('--log-to');
   if (logTo) config.logDir = logTo;
 
+  // One-time cleanup migration (item 6): the desktop Routing.tsx bug wrote
+  // {name,eligible} objects (→ "[object Object]" strings) into route.accounts,
+  // silently barring every account from the routed model. Sanitize once on load
+  // and persist so the corruption is fixed at rest, not just in memory.
+  if (migrateCorruptRoutes(config)) {
+    await saveConfig(config).catch(err => console.error(`[TeamClaude] Route cleanup save failed: ${err.message}`));
+    console.error('[TeamClaude] Cleaned up corrupt route account entries in config.');
+  }
+
+  // Exit code 3 = "no accounts configured" (setup-needed), distinct from a crash
+  // (1) so a supervisor (Orca TC) can classify setup-needed vs failure. Only
+  // headless uses the distinct code; an interactive user keeps the familiar 1.
   if (config.accounts.length === 0) {
     console.error('No accounts configured.\n');
     console.error('Add an account first:');
     console.error('  teamclaude import           Import from Claude Code');
     console.error('  teamclaude login            OAuth login via browser');
     console.error('  teamclaude login --api      Add an API key');
-    process.exit(1);
+    process.exit(headless ? 3 : 1);
   }
 
   const accounts = await resolveAccounts(config);
   if (accounts.length === 0) {
     console.error('No valid accounts after initialization');
-    process.exit(1);
+    process.exit(headless ? 3 : 1);
   }
 
   const threshold = config.switchThreshold || 0.98;
@@ -198,7 +212,6 @@ async function serverCommand() {
   // bind explicitly with TEAMCLAUDE_HOST or config.proxy.host (e.g. '0.0.0.0'),
   // in which case set proxy.apiKey so the auth gate protects remote clients.
   const bindHost = process.env.TEAMCLAUDE_HOST || config.proxy.host || '127.0.0.1';
-  const headless = args.includes('--headless') || args.includes('--no-tui');
   const useTUI = !headless && process.stdout.isTTY && process.stdin.isTTY;
 
   // Opt-in background quota probe (config.quotaProbeSeconds, default 0 = off).
@@ -253,7 +266,11 @@ async function serverCommand() {
     return added;
   };
 
-  const hub = new EventHub();
+  // Random per-process boot id (item 4). The event ring's numeric ids reset each
+  // process; a client that reconnects across a restart uses a changed bootId to
+  // know the ids reset and re-seed rather than mis-associating old/new events.
+  const bootId = randomUUID();
+  const hub = new EventHub({ bootId });
   let tui = null;
 
   if (useTUI) {
@@ -315,6 +332,40 @@ async function serverCommand() {
   };
   hooks.handleEvents = (req, res) => hub.handleSSE(req, res);
   hooks.getRecentEvents = () => hub.recent();
+  hooks.getBootId = () => bootId;
+
+  // Routes write (item 1): validated+normalized upstream in the server; here we
+  // persist to disk AND apply to the live rotation. Both complete before the
+  // endpoint returns 200 (item 5c: a persisted-but-not-live 200 would be a lie).
+  hooks.setRoutes = async (routes) => {
+    await atomicConfigUpdate(diskConfig => { diskConfig.routes = routes; });
+    config.routes = routes;
+    accountManager.setRoutes(routes);
+  };
+
+  // Account control (item 2): flip disabled / set priority by stable id (name
+  // dual-accepted). Applies to the live AccountManager and persists to config,
+  // both before returning. Returns the updated account view, or null if no match.
+  hooks.setAccount = async ({ id, disabled, priority }) => {
+    const idx = accountManager.accounts.findIndex(a => accountStableId(a) === id || a.name === id);
+    if (idx < 0) return null;
+    const mgr = accountManager.accounts[idx];
+    if (disabled != null) accountManager.setDisabled(idx, disabled);
+    if (priority != null) mgr.priority = priority;
+    // Keep the in-memory config copy in step so a later TUI/save doesn't revert it.
+    const memIdx = config.accounts.findIndex(a => sameIdentity(a, mgr) || a.name === mgr.name);
+    if (memIdx >= 0) {
+      if (disabled != null) { if (disabled) config.accounts[memIdx].disabled = true; else delete config.accounts[memIdx].disabled; }
+      if (priority != null) config.accounts[memIdx].priority = priority;
+    }
+    await atomicConfigUpdate(diskConfig => {
+      const cfgIdx = diskConfig.accounts.findIndex(a => sameIdentity(a, mgr) || a.name === mgr.name);
+      if (cfgIdx < 0) return;
+      if (disabled != null) { if (disabled) diskConfig.accounts[cfgIdx].disabled = true; else delete diskConfig.accounts[cfgIdx].disabled; }
+      if (priority != null) diskConfig.accounts[cfgIdx].priority = priority;
+    });
+    return { id: accountStableId(mgr), name: mgr.name, disabled: mgr.disabled || false, priority: mgr.priority || 0 };
+  };
 
   // Browser OAuth login driven from the desktop UI. Runs the same loginOAuth
   // flow the CLI uses (it opens the browser and hosts the callback itself);
@@ -369,6 +420,12 @@ async function serverCommand() {
     return { started: true };
   };
   hooks.getStatusExtra = () => ({
+    // Envelope (item 4): version lets the client's adopt handshake check the
+    // floor; bootId ties /status to the SSE hello + /log ring; capabilities gate
+    // each cockpit surface on its own derived readiness, not mere connectivity.
+    version: currentVersion() || null,
+    bootId,
+    capabilities: [...SERVER_CAPABILITIES],
     server: {
       startedAt: new Date(serverStartedAt).toISOString(),
       uptimeSeconds: Math.round((Date.now() - serverStartedAt) / 1000),
@@ -1247,7 +1304,9 @@ Options:
   --json JSON         Import from inline JSON (import), e.g.:
                       --json '{"accessToken":"...","refreshToken":"...","expiresAt":1234}'
   --log-to DIR        Log full requests/responses to DIR (server, one file per request)
-  --headless          Run the server without the interactive TUI (for backgrounding)
+  --headless          Run the server without the interactive TUI (for backgrounding).
+                      Exits 3 (not 1) when no accounts are configured, so a
+                      supervisor can classify setup-needed vs a crash.
   --no-mitm           (run) skip the forward proxy; route via ANTHROPIC_BASE_URL only
 
 The server always accepts both base-URL and proxy/CONNECT clients, so instances

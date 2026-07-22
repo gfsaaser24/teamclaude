@@ -16,7 +16,7 @@ test('POST /teamclaude/reload invokes hooks.reload and returns the added count',
   const proxy = createProxyServer(am, CONFIG, { reload: async () => { called++; return 2; } });
   const port = await listen(proxy);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/reload`, { method: 'POST' });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/reload`, { method: 'POST', headers: { 'x-api-key': 'tc-test' } });
     const body = await res.json();
     assert.equal(res.status, 200);
     assert.equal(body.ok, true);
@@ -32,7 +32,7 @@ test('reload returns 501 when no reload handler is wired', async () => {
   const proxy = createProxyServer(am, CONFIG, {});
   const port = await listen(proxy);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/reload`, { method: 'POST' });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/reload`, { method: 'POST', headers: { 'x-api-key': 'tc-test' } });
     const body = await res.json();
     assert.equal(res.status, 501);
     assert.equal(body.ok, false);
@@ -46,7 +46,7 @@ test('reload reports handler errors as 500', async () => {
   const proxy = createProxyServer(am, CONFIG, { reload: async () => { throw new Error('boom'); } });
   const port = await listen(proxy);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/reload`, { method: 'POST' });
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/reload`, { method: 'POST', headers: { 'x-api-key': 'tc-test' } });
     const body = await res.json();
     assert.equal(res.status, 500);
     assert.equal(body.ok, false);

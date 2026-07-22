@@ -8,8 +8,12 @@
  * GET /teamclaude/log).
  */
 export class EventHub {
-  constructor({ bufferSize = 200 } = {}) {
+  constructor({ bufferSize = 200, bootId = null } = {}) {
     this.bufferSize = bufferSize;
+    // Random per-process id (item 4). Sent in the SSE hello (and mirrored on
+    // /status and /log) so a client reconnecting across a restart detects that
+    // the numeric event ids reset and re-seeds instead of mis-associating.
+    this.bootId = bootId;
     this.recentEvents = [];
     this.clients = new Set();
     this.nextEventId = 1;
@@ -40,7 +44,7 @@ export class EventHub {
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     });
-    res.write(`event: hello\ndata: ${JSON.stringify({ recent: this.recent() })}\n\n`);
+    res.write(`event: hello\ndata: ${JSON.stringify({ bootId: this.bootId, recent: this.recent() })}\n\n`);
     this.clients.add(res);
     // Keep intermediaries from timing out an idle stream; unref so the timer
     // never holds the process open.

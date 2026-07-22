@@ -5,7 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureCerts, createConnectHandler } from './mitm.js';
 import { patchAccountUuid } from './account-uuid-rewrite.js';
-import { parseRequestModel } from './account-manager.js';
+import { parseRequestModel, normalizeRoutesInput } from './account-manager.js';
 import { TopLevelFieldFinder } from './model.js';
 import { BodyWriter } from './request-log.js';
 import { upstreamFetch } from './upstream-fetch.js';
@@ -41,6 +41,49 @@ export function isLoopbackAddr(addr) {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
+// Versioned capability vocabulary this server advertises on /status + SSE hello.
+// The client maps these to its derived readiness states (usageReady /
+// routingReady / controlReady); each cockpit surface gates on its own readiness
+// rather than on mere transport connection. Add tokens as new abilities ship;
+// never repurpose an existing token's meaning.
+export const SERVER_CAPABILITIES = Object.freeze([
+  'routes.rw',          // GET/POST /teamclaude/routes (validated, atomic apply)
+  'account.write',      // POST /teamclaude/account (disabled/priority by stable id)
+  'certs.ensure',       // POST /teamclaude/certs/ensure (shared CONNECT cert lock)
+  'status.identity',    // per-account stable id + email + per-bucket observedAt
+  'events.durationMs',  // request-end events carry durationMs
+  'log.bootId',         // /log + /status + SSE hello carry a per-process bootId
+]);
+
+// Control endpoints that mutate disk/live state — the proxy-key is REQUIRED on
+// these even from loopback (item 5c). Reads and CONNECT keep the loopback
+// exemption. When no proxy key is configured at all, nothing can be required.
+export function isMutationRequest(method, url) {
+  if (method !== 'POST') return false;
+  const u = url || '';
+  return u === '/teamclaude/routes'
+    || u === '/teamclaude/account'
+    || u === '/teamclaude/certs/ensure'
+    || u === '/teamclaude/reload'
+    || u === '/teamclaude/oauth/login'
+    || /^\/teamclaude\/pin(?:\/.*)?$/.test(u);
+}
+
+// Read and JSON-parse a control-endpoint request body. An empty body is {} so a
+// bare POST is valid; a malformed body throws (the caller returns 400).
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (!raw.trim()) return {};
+  return JSON.parse(raw);
+}
+
+function sendJson(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+}
+
 export function createProxyServer(accountManager, config, hooks = {}, sx = null) {
   const upstream = config.upstream || 'https://api.anthropic.com';
   const proxyApiKey = config.proxy?.apiKey;
@@ -52,14 +95,26 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
 
   const requestHandler = async (req, res) => {
     try {
-      // Auth check — skip for localhost connections.
+      // Auth check. Reads/CONNECT keep the loopback exemption; mutating control
+      // endpoints (item 5c) require the key even from loopback.
       const clientKey = req.headers['x-api-key'];
       const isLocal = isLoopbackAddr(req.socket.remoteAddress);
-      if (proxyApiKey && !safeKeyEqual(clientKey, proxyApiKey) && !isLocal) {
+      const keyOk = !proxyApiKey || safeKeyEqual(clientKey, proxyApiKey);
+      if (!keyOk && !isLocal) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           type: 'error',
           error: { type: 'authentication_error', message: 'Invalid proxy API key' },
+        }));
+        return;
+      }
+      if (!keyOk && isMutationRequest(req.method, req.url)) {
+        // A same-box process with no/invalid key must not silently rewrite the
+        // fleet (routes/account/pin) or drive a login/reload/cert generation.
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          type: 'error',
+          error: { type: 'authentication_error', message: 'Proxy API key required for this endpoint' },
         }));
         return;
       }
@@ -85,10 +140,70 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         return;
       }
 
-      // Recent-events backfill (same ring buffer the SSE hello frame sends).
+      // Recent-events backfill (same ring buffer the SSE hello frame sends). The
+      // bootId envelope lets a client that reconnected across a restart detect
+      // that the numeric event ids reset and re-seed instead of mis-associating.
       if (req.method === 'GET' && req.url === '/teamclaude/log') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ events: hooks.getRecentEvents?.() || [] }));
+        res.end(JSON.stringify({ bootId: hooks.getBootId?.() ?? null, events: hooks.getRecentEvents?.() || [] }));
+        return;
+      }
+
+      // Routing table (item 1). GET returns the editable, persisted routes; POST
+      // validates + normalizes, then applies to disk AND the live rotation before
+      // returning 200 (a persisted-but-not-live 200 would be a lie — item 5c).
+      if (req.method === 'GET' && req.url === '/teamclaude/routes') {
+        sendJson(res, 200, { ok: true, routes: accountManager.exportRoutes() });
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/teamclaude/routes') {
+        if (!hooks.setRoutes) { sendJson(res, 501, { ok: false, error: 'routes not supported' }); return; }
+        let payload;
+        try { payload = await readJsonBody(req); }
+        catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+        let normalized;
+        try { normalized = normalizeRoutesInput(payload?.routes, accountManager.accounts); }
+        catch (err) { sendJson(res, 400, { ok: false, error: err.message }); return; }
+        try {
+          await hooks.setRoutes(normalized); // atomic disk + live setRoutes, before 200
+          sendJson(res, 200, { ok: true, routes: accountManager.exportRoutes() });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+        return;
+      }
+
+      // Account control (item 2): enable/disable + priority by stable id (name
+      // dual-accepted during the deprecation window). Atomic disk + live apply.
+      if (req.method === 'POST' && req.url === '/teamclaude/account') {
+        if (!hooks.setAccount) { sendJson(res, 501, { ok: false, error: 'account control not supported' }); return; }
+        let payload;
+        try { payload = await readJsonBody(req); }
+        catch { sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return; }
+        const id = payload?.id;
+        if (typeof id !== 'string' || !id.trim()) { sendJson(res, 400, { ok: false, error: 'id (string) is required' }); return; }
+        if (payload.disabled != null && typeof payload.disabled !== 'boolean') { sendJson(res, 400, { ok: false, error: 'disabled must be a boolean' }); return; }
+        if (payload.priority != null && (typeof payload.priority !== 'number' || !Number.isFinite(payload.priority))) { sendJson(res, 400, { ok: false, error: 'priority must be a finite number' }); return; }
+        try {
+          const result = await hooks.setAccount({ id: id.trim(), disabled: payload.disabled, priority: payload.priority });
+          if (!result) { sendJson(res, 404, { ok: false, error: `no account matching id "${id.trim()}"` }); return; }
+          sendJson(res, 200, { ok: true, account: result });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+        return;
+      }
+
+      // Cert preflight (item 3): generate the CA + upstream leaf if missing,
+      // sharing the ONE process-wide memoized generation promise with the CONNECT
+      // path so the endpoint and a first-CONNECT can't race PID-named temp files.
+      if (req.method === 'POST' && req.url === '/teamclaude/certs/ensure') {
+        try {
+          const c = await ensureCertsMemo();
+          sendJson(res, 200, { ok: true, caPath: c.caPath });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
         return;
       }
 
@@ -165,11 +280,17 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
   // minted lazily on the first intercepted CONNECT.
   const mitmHost = (() => { try { return new URL(upstream).hostname; } catch { return 'api.anthropic.com'; } })();
   let certsPromise = null;
-  const ensureLeaf = async () => {
-    // Reset the memo on failure so a transient cert error doesn't wedge the MITM
-    // path permanently (a cached rejected promise would re-throw on every CONNECT).
+  // Process-wide memoized cert generation, shared by the /teamclaude/certs/ensure
+  // endpoint AND the CONNECT path so both await the same in-flight promise and
+  // never race PID-named temp files (item 3). Reset the memo on failure so a
+  // transient cert error doesn't wedge the MITM path permanently (a cached
+  // rejected promise would re-throw on every CONNECT).
+  const ensureCertsMemo = () => {
     certsPromise ||= ensureCerts(mitmHost).catch((err) => { certsPromise = null; throw err; });
-    const c = await certsPromise;
+    return certsPromise;
+  };
+  const ensureLeaf = async () => {
+    const c = await ensureCertsMemo();
     return { key: c.leafKeyPem, cert: c.leafCertPem };
   };
   server.on('connect', createConnectHandler({ config, accountManager, ensureLeaf, logDir, hooks, log: console.error, sx }));
@@ -235,6 +356,9 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
       }
 
       const reqId = ++counter;
+      // Stamp start so request-end can carry durationMs (item 5) — the Activity
+      // tab then needs no client-side start/end correlation.
+      const startedAt = Date.now();
       hooks.onRequestStart?.(reqId, { method: req.method, path: req.url });
 
       // Buffer request body (needed to resend on a different account after a 429).
@@ -264,7 +388,7 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
           res.end(JSON.stringify({ type: 'error', error: { type: 'proxy_error', message: 'Internal proxy error' } }));
         }
       } finally {
-        hooks.onRequestEnd?.(reqId, { method: req.method, path: req.url, account: ctx.account, status: ctx.status, model: ctx.model });
+        hooks.onRequestEnd?.(reqId, { method: req.method, path: req.url, account: ctx.account, status: ctx.status, model: ctx.model, durationMs: Date.now() - startedAt });
       }
     } catch (err) {
       console.error('[TeamClaude] Unhandled error:', err);

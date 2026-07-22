@@ -12,7 +12,7 @@ test('exportQuotaState carries only persistable fields and identity, no credenti
   am.accounts[0].quota.unified7d = 0.42;
   const [entry] = am.exportQuotaState();
 
-  assert.deepEqual(Object.keys(entry).sort(), ['accountUuid', 'name', 'orgName', 'orgUuid', 'quota'].sort());
+  assert.deepEqual(Object.keys(entry).sort(), ['accountUuid', 'name', 'observedAt', 'orgName', 'orgUuid', 'quota'].sort());
   assert.equal(entry.accountUuid, 'p1');
   assert.equal(entry.quota.unified7d, 0.42);
   // Transient/credential fields must not leak.

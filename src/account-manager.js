@@ -1,6 +1,11 @@
 import { refreshAccessToken, isTokenExpiringSoon, isTokenExpired } from './oauth.js';
-import { sameIdentity } from './identity.js';
+import { sameIdentity, accountStableId, emailOf } from './identity.js';
 import { weeklyBucketForModel, modelGlobMatches } from './model.js';
+
+// Bucket keys stamped with an `observedAt` time when their utilization is
+// refreshed from a real upstream response or probe. The 5h/weekly unified
+// buckets plus a single `standard` slot for API-key token/request limits.
+const OBSERVED_BUCKETS = ['unified5h', 'unified7d', 'unified7dSonnet', 'unified7dFable', 'standard'];
 
 // Re-exported for callers that already import model helpers from here.
 export { isFableModel, modelFamily, parseRequestModel, weeklyBucketForModel, modelGlobMatches } from './model.js';
@@ -43,6 +48,92 @@ function modelMatches(declared, model) {
   return declared === model || declared.replace(/\[\d+m\]$/, '') === model;
 }
 
+/**
+ * Defense-in-depth sanitizer for a route's `accounts` list (item 6 hygiene):
+ * drop anything that isn't a usable string/number reference. The desktop
+ * Routing.tsx corruption wrote `{name, eligible}` objects here, which
+ * `String()` turned into the useless literal "[object Object]" — filter both
+ * the raw objects and any residual "[object Object]" strings left on disk.
+ * Numeric index refs are preserved (stringified) for backward compatibility.
+ */
+export function sanitizeRouteAccounts(accounts) {
+  if (!Array.isArray(accounts)) return [];
+  const out = [];
+  for (const a of accounts) {
+    if (typeof a === 'number' && Number.isFinite(a)) { out.push(String(a)); continue; }
+    if (typeof a !== 'string') continue;            // drop objects/null (the corruption)
+    const s = a.trim();
+    if (!s || s === '[object Object]') continue;    // drop empty + stringified-object residue
+    out.push(s);
+  }
+  return out;
+}
+
+/**
+ * One-time cleanup migration (item 6): the desktop Routing.tsx bug wrote
+ * `{name,eligible}` objects (which `String()` turned into "[object Object]")
+ * into `route.accounts`, silently barring every account from the routed model.
+ * Sanitize only genuinely-corrupt entries so a valid numeric-index config isn't
+ * needlessly rewritten. Mutates `config.routes` in place; returns true if it
+ * changed anything so the caller persists once.
+ */
+export function migrateCorruptRoutes(config) {
+  if (!config || !Array.isArray(config.routes)) return false;
+  const isCorrupt = a => (typeof a !== 'string' && typeof a !== 'number') || a === '[object Object]';
+  let changed = false;
+  for (const r of config.routes) {
+    if (!r || typeof r !== 'object') continue;
+    if (!('accounts' in r)) continue;
+    if (!Array.isArray(r.accounts)) { delete r.accounts; changed = true; continue; }
+    if (!r.accounts.some(isCorrupt)) continue; // no corruption → leave verbatim
+    const clean = sanitizeRouteAccounts(r.accounts);
+    if (clean.length) r.accounts = clean; else delete r.accounts;
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * Validate + normalize a routes payload from POST /teamclaude/routes. Throws on
+ * any malformed input (the endpoint maps that to 400). Account references must
+ * be strings — a stable id (item 5b) or a plain-string account name (accepted
+ * during the id-migration deprecation window). Objects are always rejected and
+ * numeric indices are rejected (they shift after a removal). Known name refs are
+ * normalized to the stable id so the persisted config converges on stable ids.
+ */
+export function normalizeRoutesInput(routes, accounts = []) {
+  if (!Array.isArray(routes)) throw new Error('routes must be an array');
+  return routes.map((r, i) => {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error(`route[${i}] must be an object`);
+    const rawMatch = Array.isArray(r.match) ? r.match : (r.match != null ? [r.match] : []);
+    const match = rawMatch.filter(g => typeof g === 'string' && g.trim()).map(g => g.trim());
+    if (!match.length) throw new Error(`route[${i}] needs at least one string match glob`);
+
+    const rawAccounts = r.accounts == null ? [] : r.accounts;
+    if (!Array.isArray(rawAccounts)) throw new Error(`route[${i}].accounts must be an array`);
+    const accts = rawAccounts.map((a, j) => {
+      if (typeof a !== 'string') {
+        throw new Error(`route[${i}].accounts[${j}] must be a string account id or name (objects/indices rejected)`);
+      }
+      const s = a.trim();
+      if (!s) throw new Error(`route[${i}].accounts[${j}] must be a non-empty string`);
+      if (/^\d+$/.test(s)) throw new Error(`route[${i}].accounts[${j}] is a numeric index; use a stable account id or name`);
+      // Normalize a known name ref to its stable id; leave unknown refs verbatim
+      // (the account may be added after the route is defined).
+      const acct = accounts.find(ac => ac.name === s || accountStableId(ac) === s);
+      return acct ? accountStableId(acct) : s;
+    });
+
+    const out = { name: (typeof r.name === 'string' && r.name.trim()) ? r.name.trim() : `route-${i + 1}`, match };
+    if (accts.length) out.accounts = accts;
+    if (r.bucket != null) {
+      if (typeof r.bucket !== 'string') throw new Error(`route[${i}].bucket must be a string`);
+      if (r.bucket.trim()) out.bucket = r.bucket.trim();
+    }
+    return out;
+  });
+}
+
 export class AccountManager {
   constructor(accounts, switchThreshold = 0.98, { refreshFn = refreshAccessToken, throttleProbeFloorMs, routes } = {}) {
     // Injectable for tests (mirrors Prober's probeFn); defaults to the real
@@ -68,6 +159,10 @@ export class AccountManager {
       // an account reveals its weekly limit and triggers re-evaluation.
       probing: true,
       quota: emptyQuota(),
+      // Per-bucket wall-clock time (ms) each quota field was last learned from a
+      // real upstream response/probe. NOT the HTTP receipt time — restored quota
+      // keeps its original observedAt so a stale value reads as stale (item 8).
+      observedAt: {},
       usage: {
         totalInputTokens: 0,
         totalOutputTokens: 0,
@@ -335,9 +430,33 @@ export class AccountManager {
     this.routes = (Array.isArray(routes) ? routes : []).map((r, i) => ({
       name: r.name || `route-${i + 1}`,
       match: (Array.isArray(r.match) ? r.match : [r.match]).filter(g => typeof g === 'string' && g),
-      accounts: Array.isArray(r.accounts) ? r.accounts.map(String) : [],
+      // Hygiene (item 6): drop the {name,eligible} object entries / "[object
+      // Object]" residue that the desktop Routing.tsx bug wrote here, so a
+      // corrupt route can never silently bar every account from a model.
+      accounts: sanitizeRouteAccounts(r.accounts),
       bucket: r.bucket || null,
     })).filter(r => r.match.length);
+  }
+
+  /** True if a route account *reference* names this account: a stable id, a
+   * plain-string name (deprecation window), or a legacy numeric index. */
+  _accountMatchesRef(account, ref) {
+    if (typeof ref !== 'string') return false;
+    return ref === account.name
+      || ref === accountStableId(account)
+      || ref === String(account.index);
+  }
+
+  /** The persisted, editable route table (what GET /teamclaude/routes returns) —
+   * the normalized configured routes only, without the display view's
+   * auto-created routes or eligibility flags. */
+  exportRoutes() {
+    return this.routes.map(r => {
+      const out = { name: r.name, match: [...r.match] };
+      if (r.accounts.length) out.accounts = [...r.accounts];
+      if (r.bucket) out.bucket = r.bucket;
+      return out;
+    });
   }
 
   /** The first configured route whose globs match `model`, or null. */
@@ -360,7 +479,7 @@ export class AccountManager {
   _routeAllows(account, model) {
     const route = this._routeForModel(model);
     if (route && route.accounts.length) {
-      return route.accounts.includes(account.name) || route.accounts.includes(String(account.index));
+      return route.accounts.some(ref => this._accountMatchesRef(account, ref));
     }
     return this._accountOwnsModel(account, model);
   }
@@ -412,7 +531,7 @@ export class AccountManager {
   _routeAccountsView(route) {
     const sample = route.match[0].replace(/\*/g, '') || 'model';
     const inRoute = a => !route.accounts.length
-      || route.accounts.includes(a.name) || route.accounts.includes(String(a.index));
+      || route.accounts.some(ref => this._accountMatchesRef(a, ref));
     return this.accounts.filter(inRoute).map(a => ({ name: a.name, eligible: this._isAvailable(a, sample) }));
   }
 
@@ -676,12 +795,15 @@ export class AccountManager {
   updateQuota(accountIndex, headers) {
     const account = this.accounts[accountIndex];
     if (!account) return;
+    // Every field set below is learned from a live upstream response — stamp its
+    // bucket's observedAt so freshness reflects real receipt, not a passive restore.
+    const now = Date.now();
 
     // Unified rate limits (Claude Max)
     const u5h = parseFloat(headers['anthropic-ratelimit-unified-5h-utilization']);
     const u7d = parseFloat(headers['anthropic-ratelimit-unified-7d-utilization']);
-    if (!isNaN(u5h)) account.quota.unified5h = u5h;
-    if (!isNaN(u7d)) account.quota.unified7d = u7d;
+    if (!isNaN(u5h)) { account.quota.unified5h = u5h; account.observedAt.unified5h = now; }
+    if (!isNaN(u7d)) { account.quota.unified7d = u7d; account.observedAt.unified7d = now; }
 
     const r5h = headers['anthropic-ratelimit-unified-5h-reset'];
     const r7d = headers['anthropic-ratelimit-unified-7d-reset'];
@@ -693,7 +815,7 @@ export class AccountManager {
     // limit (it correlates with the usage endpoint's Fable-scoped weekly bucket).
     // Utilization here is already a 0-1 fraction (can exceed 1 when in overage).
     const u7dOi = parseFloat(headers['anthropic-ratelimit-unified-7d_oi-utilization']);
-    if (!isNaN(u7dOi)) account.quota.unified7dFable = u7dOi;
+    if (!isNaN(u7dOi)) { account.quota.unified7dFable = u7dOi; account.observedAt.unified7dFable = now; }
     const r7dOi = headers['anthropic-ratelimit-unified-7d_oi-reset'];
     if (r7dOi) account.quota.unified7dFableReset = parseInt(r7dOi, 10) * 1000;
 
@@ -716,10 +838,10 @@ export class AccountManager {
     const requestsRemaining = parseInt(headers['anthropic-ratelimit-requests-remaining'], 10);
     const requestsReset = headers['anthropic-ratelimit-requests-reset'];
 
-    if (!isNaN(tokensLimit)) account.quota.tokensLimit = tokensLimit;
-    if (!isNaN(tokensRemaining)) account.quota.tokensRemaining = tokensRemaining;
-    if (!isNaN(requestsLimit)) account.quota.requestsLimit = requestsLimit;
-    if (!isNaN(requestsRemaining)) account.quota.requestsRemaining = requestsRemaining;
+    if (!isNaN(tokensLimit)) { account.quota.tokensLimit = tokensLimit; account.observedAt.standard = now; }
+    if (!isNaN(tokensRemaining)) { account.quota.tokensRemaining = tokensRemaining; account.observedAt.standard = now; }
+    if (!isNaN(requestsLimit)) { account.quota.requestsLimit = requestsLimit; account.observedAt.standard = now; }
+    if (!isNaN(requestsRemaining)) { account.quota.requestsRemaining = requestsRemaining; account.observedAt.standard = now; }
 
     if (tokensReset) account.quota.resetsAt = tokensReset;
     else if (requestsReset) account.quota.resetsAt = requestsReset;
@@ -773,21 +895,24 @@ export class AccountManager {
     const account = this.accounts[accountIndex];
     if (!account || !usage) return;
     const q = account.quota;
+    // A probe is a live read of the usage endpoint — stamp observedAt like a
+    // real response so the cockpit's freshness reflects it (item 8).
+    const now = Date.now();
 
     if (usage.fiveHour) {
-      if (usage.fiveHour.utilization != null) q.unified5h = usage.fiveHour.utilization;
+      if (usage.fiveHour.utilization != null) { q.unified5h = usage.fiveHour.utilization; account.observedAt.unified5h = now; }
       if (usage.fiveHour.resetAt != null) q.unified5hReset = usage.fiveHour.resetAt;
     }
     if (usage.sevenDay) {
-      if (usage.sevenDay.utilization != null) q.unified7d = usage.sevenDay.utilization;
+      if (usage.sevenDay.utilization != null) { q.unified7d = usage.sevenDay.utilization; account.observedAt.unified7d = now; }
       if (usage.sevenDay.resetAt != null) q.unified7dReset = usage.sevenDay.resetAt;
     }
     if (usage.sevenDaySonnet) {
-      if (usage.sevenDaySonnet.utilization != null) q.unified7dSonnet = usage.sevenDaySonnet.utilization;
+      if (usage.sevenDaySonnet.utilization != null) { q.unified7dSonnet = usage.sevenDaySonnet.utilization; account.observedAt.unified7dSonnet = now; }
       if (usage.sevenDaySonnet.resetAt != null) q.unified7dSonnetReset = usage.sevenDaySonnet.resetAt;
     }
     if (usage.sevenDayFable) {
-      if (usage.sevenDayFable.utilization != null) q.unified7dFable = usage.sevenDayFable.utilization;
+      if (usage.sevenDayFable.utilization != null) { q.unified7dFable = usage.sevenDayFable.utilization; account.observedAt.unified7dFable = now; }
       if (usage.sevenDayFable.resetAt != null) q.unified7dFableReset = usage.sevenDayFable.resetAt;
     }
 
@@ -922,6 +1047,7 @@ export class AccountManager {
       // Unknown quota until the first response — probe it like startup accounts.
       probing: true,
       quota: emptyQuota(),
+      observedAt: {},
       usage: { totalInputTokens: 0, totalOutputTokens: 0, totalRequests: 0, lastUsed: null },
       rateLimitedUntil: null,
       throttledAt: null,
@@ -955,7 +1081,10 @@ export class AccountManager {
     return this.accounts.map(a => {
       const quota = {};
       for (const f of PERSISTED_QUOTA_FIELDS) quota[f] = a.quota[f];
-      return { accountUuid: a.accountUuid, orgUuid: a.orgUuid, orgName: a.orgName, name: a.name, quota };
+      // Persist observedAt alongside quota (item 8) so freshness survives a
+      // restart: a restored value keeps its original observation time and reads
+      // as stale, rather than looking freshly seen at process start.
+      return { accountUuid: a.accountUuid, orgUuid: a.orgUuid, orgName: a.orgName, name: a.name, quota, observedAt: { ...a.observedAt } };
     });
   }
 
@@ -972,6 +1101,14 @@ export class AccountManager {
       for (const f of PERSISTED_QUOTA_FIELDS) {
         if (match.quota[f] != null) account.quota[f] = match.quota[f];
       }
+      // Restore observation times (item 8) — a restored bucket is NOT freshly
+      // observed, so keep the saved timestamp (a bucket that had none stays
+      // unstamped, i.e. never observed).
+      if (match.observedAt && typeof match.observedAt === 'object') {
+        for (const b of OBSERVED_BUCKETS) {
+          if (match.observedAt[b] != null) account.observedAt[b] = match.observedAt[b];
+        }
+      }
       // We already know this account's weekly window, so it isn't "probing".
       if (account.quota.unified7dReset != null) account.probing = false;
     }
@@ -987,13 +1124,22 @@ export class AccountManager {
       switchThreshold: this.switchThreshold,
       routes: this.getRoutes(),
       accounts: this.accounts.map(a => ({
+        // Stable identity (item 5b): mutation endpoints target `id`; `email` is a
+        // display fallback and `name` the current display label.
+        id: accountStableId(a),
         name: a.name,
+        email: emailOf(a) || null,
         type: a.type,
         orgName: a.orgName || null,
         priority: a.priority || 0,
         disabled: a.disabled || false,
         status: a.status,
         quota: { ...a.quota },
+        // Per-bucket freshness (item 5b/8) as ISO timestamps — NOT HTTP receipt
+        // time. Absent buckets were never observed from real traffic.
+        observedAt: Object.fromEntries(
+          Object.entries(a.observedAt).map(([k, v]) => [k, new Date(v).toISOString()]),
+        ),
         usage: { ...a.usage },
         rateLimitedUntil: a.rateLimitedUntil
           ? new Date(a.rateLimitedUntil).toISOString()
