@@ -178,9 +178,18 @@ export class ProxyClient {
         body: JSON.stringify({ id: target, ...patch }),
         signal: AbortSignal.timeout(10_000),
       })
+      // ONLY a true 404 means "endpoint unsupported" → supported:false, so the
+      // caller may fall back to a legacy config write. Any other non-2xx (e.g. a
+      // 400 unknown_account) means the endpoint EXISTS and rejected the request:
+      // supported:true so it surfaces as an error and NEVER triggers a fallback
+      // write. Prefer the body's `error` field (e.g. 'unknown_account').
       if (res.status === 404) return { ok: false, supported: false, error: '404' }
       const text = await res.text()
-      if (!res.ok) return { ok: false, supported: true, error: `${res.status} ${res.statusText}` }
+      if (!res.ok) {
+        let error = `${res.status} ${res.statusText}`
+        try { const j = JSON.parse(text) as { error?: unknown }; if (typeof j.error === 'string' && j.error) error = j.error } catch { /* keep status text */ }
+        return { ok: false, supported: true, error }
+      }
       try { return { ok: (JSON.parse(text) as { ok?: boolean })?.ok !== false, supported: true } } catch { return { ok: true, supported: true } }
     } catch (err) {
       return { ok: false, supported: true, error: (err as Error).message }

@@ -6,9 +6,46 @@ import { Label } from '@renderer/components/ui/label'
 import { Badge } from '@renderer/components/ui/badge'
 import { Plus, Trash2, Save, X, ChevronDown, ChevronRight, Route as RouteIcon, AlertTriangle } from 'lucide-react'
 import { useTcStore } from '../store'
-import type { TcEvent } from '../types'
+import type { TcEvent, TcStatus } from '../types'
 
 interface Route { name: string; match: string[]; accounts?: string[]; bucket?: string }
+
+// Coerce a status-DTO route-account entry to its name string. The /status display
+// DTO carries account refs as either plain id/name strings OR {name, eligible}
+// display objects; both collapse to a name here. Display-only — these names are
+// never written back (the 404-degraded view is strictly read-only).
+function accountRefName(a: unknown): string | null {
+  if (typeof a === 'string') return a.trim() || null
+  if (a && typeof a === 'object' && typeof (a as { name?: unknown }).name === 'string') {
+    return (a as { name: string }).name.trim() || null
+  }
+  return null
+}
+
+// Read-only routes derived from the /teamclaude/status display DTO. Used ONLY
+// when the dedicated /routes endpoints are unsupported (older teamclaude → 404):
+// instead of showing an empty list (which reads as "no routes configured"), we
+// surface the routes actually in effect, strictly for display. Never persisted;
+// the view keeps every control disabled and shows the update-teamclaude notice.
+export function routesFromStatus(status: TcStatus | null | undefined): Route[] {
+  const raw = status?.routes
+  if (!Array.isArray(raw)) return []
+  const out: Route[] = []
+  for (const r of raw as unknown[]) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    if (typeof o.name !== 'string' || !o.name.trim()) continue
+    const match = Array.isArray(o.match) ? o.match.filter((m): m is string => typeof m === 'string' && m.trim() !== '') : []
+    const accounts = Array.isArray(o.accounts) ? o.accounts.map(accountRefName).filter((n): n is string => !!n) : []
+    out.push({
+      name: o.name.trim(),
+      match,
+      accounts: accounts.length ? accounts : undefined,
+      bucket: typeof o.bucket === 'string' && o.bucket.trim() ? o.bucket : undefined,
+    })
+  }
+  return out
+}
 
 // Normalize the editor's routes into the strings-only shape the POST endpoint
 // accepts: drop nameless/matchless routes, trim, and keep only string account
@@ -100,6 +137,12 @@ export default function Routing(): React.JSX.Element {
 
   const incomplete = routes.some(r => r.name.trim() && r.match.length === 0)
 
+  // What the tab shows. When editing is supported these are the editable routes
+  // loaded from GET /routes. When unsupported (404), fall back to the read-only
+  // routes derived from the /status display DTO so the user sees what is actually
+  // in effect rather than a misleading empty "no routes yet" state.
+  const displayRoutes = supported ? routes : routesFromStatus(status)
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
@@ -130,7 +173,7 @@ export default function Routing(): React.JSX.Element {
         <p className="text-xs text-destructive">{saveError}</p>
       )}
 
-      {routes.length === 0 && (
+      {displayRoutes.length === 0 && (
         <Card>
           <CardContent className="space-y-2 py-6 text-center">
             <RouteIcon className="mx-auto size-6 text-muted-foreground" />
@@ -145,7 +188,7 @@ export default function Routing(): React.JSX.Element {
         </Card>
       )}
 
-      {routes.map((r, i) => (
+      {displayRoutes.map((r, i) => (
         <RouteEditor
           key={i}
           route={r}

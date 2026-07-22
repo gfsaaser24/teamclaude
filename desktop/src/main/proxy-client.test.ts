@@ -157,4 +157,16 @@ describe('ProxyClient.setAccount', () => {
     const r = await new ProxyClient({ port, apiKey: 'k' }).setAccount('work', { priority: 3 })
     expect(r.supported).toBe(false)
   })
+
+  it('surfaces a 400 unknown_account as an error with supported:true (endpoint exists → no fallback)', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error: 'unknown_account' }))
+    })
+    const port = await listen(server)
+    const r = await new ProxyClient({ port, apiKey: 'k' }).setAccount('ghost', { disabled: true })
+    expect(r.supported).toBe(true)  // NOT 404 → the caller must not fall back to a config write
+    expect(r.ok).toBe(false)
+    expect(r.error).toBe('unknown_account') // body error surfaced verbatim to the renderer
+  })
 })
