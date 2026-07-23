@@ -55,6 +55,16 @@ test('a spent Sonnet weekly bucket bars only Sonnet — Opus/Fable unaffected', 
   assert.equal(am._isAvailable(am.accounts[0], FABLE), true);
 });
 
+test('a rate-limit hold on a governing family bucket does not throttle the whole account', () => {
+  const am = new AccountManager([oauth('a')], 0.98);
+  am.markRateLimited(0, 60, 'unified7dFable');
+
+  assert.equal(am.accounts[0].status, 'active', 'bucket hold must not set the account-global status');
+  assert.equal(am._isAvailable(am.accounts[0], FABLE), false, 'the rejected family is held');
+  assert.equal(am._isAvailable(am.accounts[0], OPUS), true, 'other families keep using the account');
+  assert.equal(am._isAvailable(am.accounts[0], SONNET), true, 'unrelated family bucket is unaffected');
+});
+
 test('the shared 5h bucket still gates every model', () => {
   const am = new AccountManager([oauth('a')], 0.98);
   am.accounts[0].quota.unified5h = 0.99; // over threshold → nothing routes

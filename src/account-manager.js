@@ -135,10 +135,16 @@ export function normalizeRoutesInput(routes, accounts = []) {
 }
 
 export class AccountManager {
-  constructor(accounts, switchThreshold = 0.98, { refreshFn = refreshAccessToken, throttleProbeFloorMs, routes } = {}) {
+  constructor(accounts, switchThreshold = 0.98, {
+    refreshFn = refreshAccessToken,
+    throttleProbeFloorMs,
+    routes,
+    now = Date.now,
+  } = {}) {
     // Injectable for tests (mirrors Prober's probeFn); defaults to the real
     // OAuth token refresh.
     this._refreshFn = refreshFn;
+    this._now = now;
     this.accounts = accounts.map((acct, index) => ({
       index,
       name: acct.name,
@@ -171,6 +177,8 @@ export class AccountManager {
       },
       rateLimitedUntil: null,
       throttledAt: null,
+      rateLimitedBuckets: {},
+      inFlight: 0,
     }));
     this.currentIndex = 0;
     // Runtime-only manual pin (resets on restart): index of the account the user
@@ -189,6 +197,40 @@ export class AccountManager {
     // retry-after, short enough that a stale hold cannot pin the fleet.
     this.throttleProbeFloorMs = throttleProbeFloorMs
       ?? (Number(process.env.TEAMCLAUDE_THROTTLE_PROBE_FLOOR_MS) || 60_000);
+    // Shared by every listener using this manager (base proxy + MITM). A bare
+    // 429 opens the egress circuit instead of poisoning account state.
+    this._egressBreaker = { until: 0, delaySeconds: 0 };
+  }
+
+  /** Open/extend the shared transient-429 circuit. The first hold honors a
+   * shorter Retry-After but never starts above 15s; repeated overlapping trips
+   * back off exponentially, capped at 60s. */
+  openEgressBreaker(retryAfterSeconds) {
+    const now = this._now();
+    const hint = Number(retryAfterSeconds);
+    const initial = Number.isFinite(hint) && hint > 0
+      ? Math.min(Math.ceil(hint), 15)
+      : 15;
+    const overlapping = this._egressBreaker.until > now;
+    const delaySeconds = overlapping
+      ? Math.min(60, Math.max(initial, this._egressBreaker.delaySeconds * 2))
+      : initial;
+    this._egressBreaker = { until: now + delaySeconds * 1000, delaySeconds };
+    return this.getEgressBreaker();
+  }
+
+  /** Current circuit view. Reading after expiry closes it automatically. */
+  getEgressBreaker() {
+    const now = this._now();
+    if (this._egressBreaker.until <= now) {
+      this._egressBreaker = { until: 0, delaySeconds: 0 };
+      return { open: false, retryAfter: 0, until: null };
+    }
+    return {
+      open: true,
+      retryAfter: Math.max(1, Math.ceil((this._egressBreaker.until - now) / 1000)),
+      until: this._egressBreaker.until,
+    };
   }
 
   /**
@@ -241,6 +283,40 @@ export class AccountManager {
     // quota (or upstream's own 429 converts soft exhaustion into a hard
     // rate-limit hold). null here means the caller emits the synthetic 429.
     return this._selectProbe(exclude, model);
+  }
+
+  /** Select and synchronously reserve an account for a network request. Equal-
+   * priority accounts are biased by the fewest in-flight leases, preventing a
+   * burst from racing onto the sticky current account before responses arrive. */
+  acquireActiveAccount(exclude = null, model = null) {
+    this.refreshExpiredQuotas();
+    let account = null;
+    if (this.manualIndex != null) {
+      const pinned = this.accounts[this.manualIndex];
+      if (pinned && this._isAvailable(pinned, model) && !exclude?.has(pinned.index)) account = pinned;
+    }
+    account ||= this._pickBestAvailable(exclude, model, true);
+    account ||= this._selectProbe(exclude, model);
+    if (!account) return null;
+
+    const switched = account.index !== this.currentIndex;
+    this.currentIndex = account.index;
+    account.probing = account.quota.unified7dReset == null;
+    account.inFlight++;
+    if (switched) console.log(`[TeamClaude] Switched to account "${account.name}"`);
+    return account;
+  }
+
+  /** Reserve a specifically pinned account and release any lease idempotently. */
+  leaseAccount(accountIndex) {
+    const account = this.accounts[accountIndex];
+    if (account) account.inFlight++;
+    return account || null;
+  }
+
+  releaseAccount(accountIndex) {
+    const account = this.accounts[accountIndex];
+    if (account) account.inFlight = Math.max(0, account.inFlight - 1);
   }
 
   /**
@@ -362,6 +438,7 @@ export class AccountManager {
     for (const account of this.accounts) {
       if (exclude?.has(account.index)) continue;
       if (!this._isProbeable(account)) continue;
+      if (this._isBucketRateLimited(account, model)) continue;
       // A family-exhausted account can't serve that family even as a probe — it
       // would just 429 again — so skip it (Fable/Sonnet) and let the caller emit
       // the synthetic 429 when no other account is available.
@@ -406,6 +483,7 @@ export class AccountManager {
     }
 
     if (account.status === 'exhausted' || account.status === 'error') return false;
+    if (this._isBucketRateLimited(account, model)) return false;
     // Model-scoped: _isNearQuota checks the shared 5h bucket plus only the weekly
     // bucket that governs this model, so a spent Fable/Sonnet bucket bars just
     // that family — the account still serves every other model normally.
@@ -418,6 +496,31 @@ export class AccountManager {
     if (model && !this._routeAllows(account, model)) return false;
 
     return true;
+  }
+
+  /** Whether the weekly bucket governing this model has an active hold. */
+  _isBucketRateLimited(account, model = null) {
+    const bucket = this._weeklyBucketFor(model);
+    const hold = account?.rateLimitedBuckets?.[bucket];
+    if (!hold) return false;
+    if (Date.now() < hold.until) return true;
+    delete account.rateLimitedBuckets[bucket];
+    return false;
+  }
+
+  /** Active global/model-scoped hold deadline for one account (ms), or null. */
+  rateLimitedUntilFor(accountIndex, model = null) {
+    const account = this.accounts[accountIndex];
+    if (!account) return null;
+    let until = account.rateLimitedUntil || null;
+    const bucket = this._weeklyBucketFor(model);
+    const hold = account.rateLimitedBuckets?.[bucket];
+    if (hold && Date.now() >= hold.until) {
+      delete account.rateLimitedBuckets[bucket];
+    } else if (hold) {
+      until = Math.max(until || 0, hold.until);
+    }
+    return until;
   }
 
   /**
@@ -470,6 +573,25 @@ export class AccountManager {
   _weeklyBucketFor(model) {
     const route = this._routeForModel(model);
     return route?.bucket || weeklyBucketForModel(model);
+  }
+
+  /** Resolve a rejected unified limiter header to the weekly bucket governing
+   * this model. Shared 5h or ambiguous/top-level rejections return null so the
+   * caller uses the account-global fallback. */
+  rateLimitBucketFor(model, headers = {}) {
+    const rejected = (key) => String(headers[key] || '').toLowerCase() === 'rejected';
+    if (rejected('anthropic-ratelimit-unified-5h-status')) return null;
+
+    const governing = this._weeklyBucketFor(model);
+    const statusHeaders = {
+      unified7d: ['anthropic-ratelimit-unified-7d-status'],
+      unified7dFable: ['anthropic-ratelimit-unified-7d_oi-status'],
+      unified7dSonnet: [
+        'anthropic-ratelimit-unified-7d-sonnet-status',
+        'anthropic-ratelimit-unified-7d_sonnet-status',
+      ],
+    };
+    return statusHeaders[governing]?.some(rejected) ? governing : null;
   }
 
   /** Whether `account` may serve `model`. A matching route with an `accounts`
@@ -681,9 +803,10 @@ export class AccountManager {
    * With all priorities at the default 0, this reduces to the weekly-reset
    * heuristic. Returns the account or null if none are available.
    */
-  _pickBestAvailable(exclude = null, model = null) {
+  _pickBestAvailable(exclude = null, model = null, preferLeastInFlight = false) {
     let best = null;
     let bestPriority = Infinity;
+    let bestInFlight = Infinity;
     let bestReset = Infinity;
 
     for (let i = 0; i < this.accounts.length; i++) {
@@ -695,14 +818,17 @@ export class AccountManager {
       if (!this._isAvailable(account, model)) continue;
 
       const priority = account.priority || 0;
+      const inFlight = preferLeastInFlight ? account.inFlight : 0;
       // Rank by the reset of the weekly bucket that governs THIS model (Fable and
       // Sonnet have their own), so a Fable request spends the account whose Fable
       // window refreshes soonest while preserving accounts that reset later for
       // Opus/Sonnet. Unknown reset sorts first so we probe and fill it in.
       const weeklyReset = this._governingWeeklyReset(account, model) || -Infinity;
       if (priority < bestPriority ||
-          (priority === bestPriority && weeklyReset < bestReset)) {
+          (priority === bestPriority && inFlight < bestInFlight) ||
+          (priority === bestPriority && inFlight === bestInFlight && weeklyReset < bestReset)) {
         bestPriority = priority;
+        bestInFlight = inFlight;
         bestReset = weeklyReset;
         best = account;
       }
@@ -927,9 +1053,18 @@ export class AccountManager {
   /**
    * Mark an account as rate-limited for a given duration.
    */
-  markRateLimited(accountIndex, retryAfterSeconds) {
+  markRateLimited(accountIndex, retryAfterSeconds, bucket = null) {
     const account = this.accounts[accountIndex];
     if (!account) return;
+    if (bucket) {
+      const now = Date.now();
+      account.rateLimitedBuckets[bucket] = {
+        until: now + (retryAfterSeconds * 1000),
+        throttledAt: now,
+      };
+      console.log(`[TeamClaude] Account ${account.name} bucket ${bucket} rate limited for ${retryAfterSeconds}s`);
+      return;
+    }
     account.status = 'throttled';
     account.rateLimitedUntil = Date.now() + (retryAfterSeconds * 1000);
     // Marks when the hold was (re-)armed: a revalidation probe is allowed only
@@ -1051,6 +1186,8 @@ export class AccountManager {
       usage: { totalInputTokens: 0, totalOutputTokens: 0, totalRequests: 0, lastUsed: null },
       rateLimitedUntil: null,
       throttledAt: null,
+      rateLimitedBuckets: {},
+      inFlight: 0,
     });
     return index;
   }

@@ -217,7 +217,8 @@ test('MITM h2: a quota-429 on one account is transparently retried on another', 
     assert.equal(resp[':status'], 200, 'client sees a 200, not the 429');
     assert.equal(body, 'served-by-B');
     assert.deepEqual(hits, ['Bearer TOK-A', 'Bearer TOK-B'], 'tried A, then retried on B');
-    assert.equal(am.accounts[0].status, 'throttled', 'account A held after its quota rejection');
+    assert.equal(am.accounts[0].status, 'active', 'known weekly bucket does not globally throttle A');
+    assert.ok(am.accounts[0].rateLimitedBuckets.unified7d, 'the rejected weekly bucket is held');
     client.close();
   } finally {
     tlsSock.destroy(); closeHard(proxy); closeHard(upstream);

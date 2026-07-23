@@ -15,7 +15,15 @@ function makeStack(upstreamHandler) {
   const upstream = http.createServer(upstreamHandler);
   // Realistic-length token so the 20-char mask actually truncates it.
   const am = new AccountManager(
-    [{ name: 'a', type: 'oauth', accessToken: 'sk-ant-oat-SECRETvalue-0123456789', refreshToken: 'r', expiresAt: Date.now() + 3600_000 }],
+    [{
+      name: 'a',
+      accountUuid: 'uuid-a',
+      orgUuid: 'org-a',
+      type: 'oauth',
+      accessToken: 'sk-ant-oat-SECRETvalue-0123456789',
+      refreshToken: 'r',
+      expiresAt: Date.now() + 3600_000,
+    }],
     0.98,
   );
   return { upstream, am };
@@ -46,6 +54,7 @@ test('reverse-proxy logs a non-streaming JSON response (pretty, masked)', { time
     assert.match(content, /\/v1\/messages/);
     assert.match(content, /=== REQUEST BODY ===/);
     assert.match(content, /=== RESPONSE 200 ===/);
+    assert.match(content, /=== PROVENANCE ===\r?\n\{"accountId":"uuid-a::org-a","status":200,"retryAfter":null,"limiterClass":"none"\}/);
     assert.match(content, /=== RESPONSE BODY ===/);
     assert.match(content, /"input_tokens": 3/);          // response pretty-printed
     assert.match(content, /authorization: Bearer sk-ant-oat-\S*\.\.\./); // injected token masked (first 20 chars)
@@ -83,6 +92,75 @@ test('reverse-proxy streams an SSE response to the log as it arrives', { timeout
     // lines survive intact, which a JSON pretty-printer would have mangled.
     assert.match(content, /event: message_start\ndata: \{"type":"message_start"/);
     assert.match(content, /event: message_delta/);
+  } finally {
+    proxy.close(); upstream.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a transient 429 writes limiter provenance to the request log', { timeout: 20000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tc-revlog-429-'));
+  const { upstream, am } = makeStack((_req, res) => {
+    res.writeHead(429, { 'retry-after': '300', 'content-type': 'application/json' });
+    res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'Rate limited' } }));
+  });
+  const upPort = await listen(upstream);
+  const proxy = createProxyServer(am, {
+    proxy: { apiKey: 'k' },
+    upstream: `http://127.0.0.1:${upPort}`,
+    logDir: dir,
+  });
+  const proxyPort = await listen(proxy);
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'x', messages: [] }),
+    });
+    await res.text();
+    await new Promise(r => setTimeout(r, 150));
+
+    assert.equal(res.status, 429);
+    const file = readdirSync(dir).find(f => f.endsWith('.log'));
+    assert.ok(file, 'the terminal limiter response must be logged');
+    const content = readFileSync(join(dir, file), 'utf8');
+    assert.match(content, /=== PROVENANCE ===\r?\n\{"accountId":"uuid-a::org-a","status":429,"retryAfter":15,"limiterClass":"transient"\}/);
+  } finally {
+    proxy.close(); upstream.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an account-quota 429 is logged even when no failover account succeeds', { timeout: 20000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tc-revlog-quota-'));
+  const { upstream, am } = makeStack((_req, res) => {
+    res.writeHead(429, {
+      'retry-after': '60',
+      'content-type': 'application/json',
+      'anthropic-ratelimit-unified-status': 'rejected',
+      'anthropic-ratelimit-unified-5h-status': 'rejected',
+    });
+    res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'Usage limit reached' } }));
+  });
+  const upPort = await listen(upstream);
+  const proxy = createProxyServer(am, {
+    proxy: { apiKey: 'k' },
+    upstream: `http://127.0.0.1:${upPort}`,
+    logDir: dir,
+  });
+  const proxyPort = await listen(proxy);
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'x', messages: [] }),
+    });
+    await res.text();
+    await new Promise(r => setTimeout(r, 150));
+
+    assert.equal(res.status, 429);
+    const file = readdirSync(dir).find(f => f.endsWith('.log'));
+    assert.ok(file, 'the rejected account attempt must be logged');
+    const content = readFileSync(join(dir, file), 'utf8');
+    assert.match(content, /=== PROVENANCE ===\r?\n\{"accountId":"uuid-a::org-a","status":429,"retryAfter":60,"limiterClass":"account"\}/);
   } finally {
     proxy.close(); upstream.close(); rmSync(dir, { recursive: true, force: true });
   }

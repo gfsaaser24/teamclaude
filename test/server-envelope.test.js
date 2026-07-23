@@ -12,7 +12,15 @@ function listen(server) {
 
 function oauthAM() {
   return new AccountManager(
-    [{ name: 'a', type: 'oauth', accessToken: 't', refreshToken: 'r', expiresAt: Date.now() + 3600_000 }],
+    [{
+      name: 'a',
+      accountUuid: 'uuid-a',
+      orgUuid: 'org-a',
+      type: 'oauth',
+      accessToken: 't',
+      refreshToken: 'r',
+      expiresAt: Date.now() + 3600_000,
+    }],
     0.98,
   );
 }
@@ -104,5 +112,9 @@ test('request-end info carries a durationMs measured across the request', async 
     assert.ok(ended, 'onRequestEnd fired');
     assert.equal(typeof ended.durationMs, 'number');
     assert.ok(ended.durationMs >= 20, `durationMs (${ended.durationMs}) reflects the ~25ms upstream delay`);
+    assert.equal(ended.accountId, 'uuid-a::org-a');
+    assert.equal(ended.status, 200);
+    assert.equal(ended.retryAfter, null);
+    assert.equal(ended.limiterClass, 'none');
   } finally { proxy.close(); upstream.close(); }
 });

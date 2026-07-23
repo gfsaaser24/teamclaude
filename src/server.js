@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { ensureCerts, createConnectHandler } from './mitm.js';
 import { patchAccountUuid } from './account-uuid-rewrite.js';
 import { parseRequestModel, normalizeRoutesInput } from './account-manager.js';
-import { accountMatchesRef } from './identity.js';
+import { accountMatchesRef, accountStableId } from './identity.js';
 import { TopLevelFieldFinder } from './model.js';
 import { BodyWriter } from './request-log.js';
 import { upstreamFetch } from './upstream-fetch.js';
@@ -17,6 +17,32 @@ export const HOP_BY_HOP_HEADERS = new Set([
   'te', 'trailer', 'upgrade', 'proxy-authorization', 'proxy-authenticate',
 ]);
 const INLINE_RETRY_AFTER_MAX_SECONDS = 15;
+
+// A bare 429 (even one whose JSON error type is `rate_limit_error`) is not proof
+// that the selected account exhausted quota. Rotate only when upstream supplies
+// account-scoped evidence: an exhausted limiter bucket or text that explicitly
+// names a usage/quota limit. Opaque concurrency/IP rejections stay transient.
+export function classifyRateLimit429(rateLimitHeaders = {}, responseBody = '') {
+  for (const [rawKey, rawValue] of Object.entries(rateLimitHeaders)) {
+    const key = rawKey.toLowerCase();
+    const value = String(rawValue).toLowerCase();
+    if (key.startsWith('anthropic-ratelimit-') && key.endsWith('-status')
+        && (value === 'rejected' || value === 'exhausted')) {
+      return 'account';
+    }
+    if (/^anthropic-ratelimit-(?:tokens|requests)-remaining$/.test(key)
+        && Number.isFinite(Number(rawValue)) && Number(rawValue) <= 0) {
+      return 'account';
+    }
+  }
+
+  const text = String(responseBody).toLowerCase();
+  if (/\b(?:usage|weekly|monthly|spending|credit|quota)(?:[\s_-]+(?:usage|rate|spending|credit|quota))?[\s_-]+limits?\b/.test(text)
+      || /\b(?:usage|quota)\b.{0,40}\b(?:exceeded|exhausted)\b/.test(text)) {
+    return 'account';
+  }
+  return 'transient';
+}
 
 // Response header names that are connection-specific and thus illegal on an
 // HTTP/2 response (Node's Http2ServerResponse.writeHead rejects them). Also
@@ -422,7 +448,16 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
       const body = Buffer.concat(bodyChunks);
 
       const model = modelFinder.done ? modelFinder.value : parseRequestModel(body);
-      const ctx = { account: null, status: null, tried: new Set(), model, pinnedIndex };
+      const ctx = {
+        account: null,
+        accountId: null,
+        status: null,
+        retryAfter: null,
+        limiterClass: 'none',
+        tried: new Set(),
+        model,
+        pinnedIndex,
+      };
       try {
         await forwardRequest(req, res, body, accountManager, upstream, 0, hooks, reqId, ctx, logDir, sx);
       } catch (err) {
@@ -433,7 +468,17 @@ export function createProxyRequestListener({ accountManager, upstream, logDir = 
           res.end(JSON.stringify({ type: 'error', error: { type: 'proxy_error', message: 'Internal proxy error' } }));
         }
       } finally {
-        hooks.onRequestEnd?.(reqId, { method: req.method, path: req.url, account: ctx.account, status: ctx.status, model: ctx.model, durationMs: Date.now() - startedAt });
+        hooks.onRequestEnd?.(reqId, {
+          method: req.method,
+          path: req.url,
+          account: ctx.account,
+          accountId: ctx.accountId,
+          status: ctx.status,
+          retryAfter: ctx.retryAfter,
+          limiterClass: ctx.limiterClass,
+          model: ctx.model,
+          durationMs: Date.now() - startedAt,
+        });
       }
     } catch (err) {
       console.error('[TeamClaude] Unhandled error:', err);
@@ -563,6 +608,28 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
   // from the default policy ('always' routes; 'off'/'429' start direct).
   const route = useSx === undefined ? !!(sx?.useByDefault()) : useSx;
 
+  // A generic upstream 429 is shared-egress evidence, not an instruction to try
+  // another credential. Backpressure every listener sharing this manager until
+  // the short circuit expires, before selecting or leasing an account.
+  const breaker = accountManager.getEgressBreaker?.();
+  if (breaker?.open) {
+    ctx.status = 429;
+    ctx.retryAfter = breaker.retryAfter;
+    ctx.limiterClass = 'transient';
+    res.writeHead(429, {
+      'Content-Type': 'application/json',
+      'retry-after': String(breaker.retryAfter),
+    });
+    res.end(JSON.stringify({
+      type: 'error',
+      error: {
+        type: 'rate_limit_error',
+        message: `Shared upstream egress is temporarily rate limited. Retry in ${breaker.retryAfter}s.`,
+      },
+    }));
+    return;
+  }
+
   // Select account, skipping any already tried (and failed) this request.
   // The model scopes availability so a Fable-exhausted account is skipped only
   // for Fable requests (it still serves other models).
@@ -571,15 +638,17 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
   // and the caller gets the exhausted response rather than leaking to another.
   const account = ctx.pinnedIndex != null
     ? (ctx.tried.has(ctx.pinnedIndex) ? null : accountManager.accounts[ctx.pinnedIndex])
-    : accountManager.getActiveAccount(ctx.tried, ctx.model);
+    : accountManager.acquireActiveAccount(ctx.tried, ctx.model);
   if (!account) {
     // A pinned request concerns exactly one account: don't compute a fleet-wide
     // retry-after or sleep on other accounts' windows — return immediately.
     if (ctx.pinnedIndex != null) {
       ctx.status = 429;
       ctx.account = '(pinned account unavailable)';
+      const retryAfter = ctx.retryAfter || 5;
+      ctx.retryAfter = retryAfter;
       if (!res.headersSent) {
-        res.writeHead(429, { 'Content-Type': 'application/json', 'retry-after': '5' });
+        res.writeHead(429, { 'Content-Type': 'application/json', 'retry-after': String(retryAfter) });
         res.end(JSON.stringify({
           type: 'error',
           error: { type: 'rate_limit_error', message: 'Pinned account is unavailable (rate-limited, errored, or already tried). Retry shortly.' },
@@ -589,8 +658,8 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     }
     ctx.status = 429;
     ctx.account = '(none available)';
-    const status = accountManager.getStatus();
-    const retryAfter = computeRetryAfter(status.accounts);
+    const retryAfter = computeRetryAfter(accountManager.accounts, ctx.model, accountManager);
+    ctx.retryAfter = retryAfter;
     const exhaustedRetries = ctx.exhaustedRetries || 0;
     if (exhaustedRetries < 1 && retryAfter <= INLINE_RETRY_AFTER_MAX_SECONDS) {
       ctx.exhaustedRetries = exhaustedRetries + 1;
@@ -613,14 +682,25 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     return;
   }
 
+  if (ctx.pinnedIndex != null) accountManager.leaseAccount(account.index);
+  let leaseReleased = false;
+  const releaseLease = () => {
+    if (leaseReleased) return;
+    leaseReleased = true;
+    accountManager.releaseAccount(account.index);
+  };
+
+  try {
   // Track which account handles this request
   ctx.account = account.name;
+  ctx.accountId = accountStableId(account);
   hooks.onRequestRouted?.(reqId, { account: account.name });
 
   // Refresh OAuth token if needed
   await accountManager.ensureTokenFresh(account.index);
   if (account.status === 'error' && retryCount < maxRetries) {
     ctx.tried.add(account.index);
+    releaseLease();
     return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
   }
 
@@ -659,9 +739,9 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
   // upstream doesn't receive a mismatched framing and truncate or stall.
   if (sendBody !== body) headers['content-length'] = String(sendBody.length);
 
-  // Streaming request log, opened lazily on the first terminal outcome (a
-  // pure-429-then-retry attempt writes no file, matching prior behavior). The
-  // request head+body are written once, just before the response is logged.
+  // Streaming request log, opened lazily on a terminal response. Limiter 429s
+  // are persisted before either failover or breaker return, so even a request
+  // with no successful attempt leaves account/status provenance on disk.
   let log = null;
   let reqLogged = false;
   const getLog = () => (logDir ? (log ||= openRequestLog(logDir, reqId)) : null);
@@ -698,80 +778,79 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     // _selectProbe) clear its own hold and return the fleet to service.
     if (upstreamRes.status !== 429) accountManager.clearRateLimited(account.index);
 
-    // On 429, wait the retry-after duration and retry on the same account
-    // (this is a transient rate limit, not quota exhaustion).
+    // Classify 429s before changing account state: transient/shared-egress
+    // rejections trip the breaker and terminate; verified account quota holds
+    // only the identified governing bucket (or the whole account as fallback).
     if (upstreamRes.status === 429) {
-      // Clamp Retry-After to a sane window: missing/invalid falls back to 60s,
-      // and out-of-range values are bounded to [1, 300]. A negative value would
-      // otherwise bypass the retry cap — setTimeout returns immediately and
-      // markRateLimited would set rateLimitedUntil in the past.
+      // Missing/invalid hints fall back to 60s. Each limiter path applies its
+      // own bound below (transient breaker 15→60s; account hold at most 1h).
       let retryAfter = parseInt(upstreamRes.headers.get('retry-after'), 10);
       if (Number.isNaN(retryAfter)) retryAfter = 60;
-      // Discard the 429 response body
-      await upstreamRes.body?.cancel();
+      const rateLimitBody = Buffer.from(await upstreamRes.arrayBuffer());
 
-      // Durable quota exhaustion vs. a transient rate limit. A "rejected" unified
-      // status means a quota bucket is spent, so waiting and retrying the SAME
-      // account is futile — switch to another account now (updateQuota above
-      // already recorded the spent bucket's utilization from the headers).
-      const rl = rateLimitHeaders;
-      const generalRejected = rl['anthropic-ratelimit-unified-5h-status'] === 'rejected'
-        || rl['anthropic-ratelimit-unified-7d-status'] === 'rejected';
-      const fableRejected = rl['anthropic-ratelimit-unified-7d_oi-status'] === 'rejected' && !generalRejected;
-      if ((generalRejected || fableRejected) && retryCount < maxRetries) {
-        // A Fable-only rejection leaves the account fine for other models, so we
-        // do NOT throttle it globally — the recorded Fable utilization makes
-        // selection skip it for Fable requests only. A general rejection spends a
-        // shared bucket, so hold the whole account for its reset window.
-        if (fableRejected) {
-          console.log(`[TeamClaude] Fable weekly exhausted on "${account.name}" — switching account for this Fable request`);
-        } else {
-          const hold = Math.min(Math.max(retryAfter, 1), 3600);
-          console.log(`[TeamClaude] Quota rejection (429) on "${account.name}" — throttling ${hold}s and switching account`);
-          accountManager.markRateLimited(account.index, hold);
+      const limiterClass = classifyRateLimit429(rateLimitHeaders, rateLimitBody.toString('utf8'));
+      if (limiterClass === 'transient') {
+        const opened = accountManager.openEgressBreaker(retryAfter);
+        ctx.status = 429;
+        ctx.retryAfter = opened.retryAfter;
+        ctx.limiterClass = 'transient';
+        console.log(`[TeamClaude] Transient 429 on shared egress - circuit open for ${opened.retryAfter}s`);
+        logRequestHead();
+        const limiterLog = getLog();
+        if (limiterLog) {
+          limiterLog.write(`\n\n=== RESPONSE 429 ===\n${formatHeaders(upstreamRes.headers)}`);
+          limiterLog.write(`\n\n=== PROVENANCE ===\n${JSON.stringify({
+            accountId: ctx.accountId,
+            status: ctx.status,
+            retryAfter: ctx.retryAfter,
+            limiterClass: ctx.limiterClass,
+          })}`);
+          if (rateLimitBody.length) {
+            limiterLog.body('RESPONSE BODY', rateLimitBody, upstreamRes.headers.get('content-type'));
+          } else {
+            limiterLog.write('\n\n=== RESPONSE BODY ===\n(empty)');
+          }
+          limiterLog.end();
         }
-        ctx.tried.add(account.index);
-        if (res.destroyed) return;
-        return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
+        res.writeHead(429, {
+          'Content-Type': upstreamRes.headers.get('content-type') || 'application/json',
+          'retry-after': String(opened.retryAfter),
+        });
+        res.end(rateLimitBody.length ? rateLimitBody : JSON.stringify({
+          type: 'error',
+          error: { type: 'rate_limit_error', message: 'Shared upstream egress is temporarily rate limited.' },
+        }));
+        return;
       }
 
-      retryAfter = Math.min(Math.max(retryAfter, 1), 300);
-
-      // sx.org failover: 429s are IP-based, so retry via the proxy's egress IP.
-      // 'always' is already on sx; '429' switches direct→sx now and skips the
-      // wait (a fresh IP isn't throttled). Also arm the sticky window for MITM.
-      const nextUseSx = !!(sx?.useOn429());
-      const switchingToSx = nextUseSx && !route;
-      sx?.noteRateLimited(retryAfter);
-
-      // Bound the retries: a persistently-throttled upstream must not loop
-      // forever (that would tie up the client connection indefinitely).
-      // Once retries are exhausted, throttle this account and re-dispatch —
-      // getActiveAccount then picks another account, or returns 429 to the
-      // client if every account is throttled.
-      if (retryCount >= maxRetries) {
-        console.log(`[TeamClaude] Persistent 429 on "${account.name}" — throttling ${retryAfter}s and re-dispatching`);
-        accountManager.markRateLimited(account.index, retryAfter);
-        if (res.destroyed) return;
-        return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, nextUseSx);
+      const hold = Math.min(Math.max(retryAfter, 1), 3600);
+      const bucket = accountManager.rateLimitBucketFor(ctx.model, rateLimitHeaders);
+      ctx.status = 429;
+      ctx.retryAfter = hold;
+      ctx.limiterClass = 'account';
+      accountManager.markRateLimited(account.index, hold, bucket);
+      console.log(`[TeamClaude] Account quota 429 on ${account.name}${bucket ? ` (${bucket})` : ''} - switching account`);
+      logRequestHead();
+      const quotaLog = getLog();
+      if (quotaLog) {
+        quotaLog.write(`\n\n=== RESPONSE 429 ===\n${formatHeaders(upstreamRes.headers)}`);
+        quotaLog.write(`\n\n=== PROVENANCE ===\n${JSON.stringify({
+          accountId: ctx.accountId,
+          status: ctx.status,
+          retryAfter: ctx.retryAfter,
+          limiterClass: ctx.limiterClass,
+        })}`);
+        if (rateLimitBody.length) {
+          quotaLog.body('RESPONSE BODY', rateLimitBody, upstreamRes.headers.get('content-type'));
+        } else {
+          quotaLog.write('\n\n=== RESPONSE BODY ===\n(empty)');
+        }
+        quotaLog.end();
       }
-
-    if (!switchingToSx && retryAfter > INLINE_RETRY_AFTER_MAX_SECONDS) {
-      console.log(`[TeamClaude] 429 on "${account.name}" — throttling ${retryAfter}s and re-dispatching without waiting`);
-      accountManager.markRateLimited(account.index, retryAfter);
+      ctx.tried.add(account.index);
       if (res.destroyed) return;
-      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, nextUseSx);
-    }
-
-    if (switchingToSx) {
-      console.log(`[TeamClaude] 429 on "${account.name}" — retrying via sx.org (fresh egress IP)`);
-    } else {
-        console.log(`[TeamClaude] 429 on "${account.name}" — waiting ${retryAfter}s before retry`);
-        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-      }
-      // Client may have disconnected during the wait
-      if (res.destroyed) return;
-      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, nextUseSx);
+      releaseLease();
+      return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
     }
 
     // Log the request head (once) followed by the response headers, streaming
@@ -780,6 +859,12 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     getLog()?.write(`\n\n=== RESPONSE ${upstreamRes.status} ===\n${formatHeaders(upstreamRes.headers)}`);
 
     ctx.status = upstreamRes.status;
+    getLog()?.write(`\n\n=== PROVENANCE ===\n${JSON.stringify({
+      accountId: ctx.accountId,
+      status: ctx.status,
+      retryAfter: ctx.retryAfter,
+      limiterClass: ctx.limiterClass,
+    })}`);
 
     // Build response headers (skip hop-by-hop and encoding headers). The
     // connection-specific names are also illegal on an HTTP/2 response — when
@@ -851,6 +936,7 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     // it for the rest of THIS request only and fail over to another account.
     if (retryCount < maxRetries && !res.headersSent) {
       ctx.tried.add(account.index);
+      releaseLease();
       return forwardRequest(req, res, body, accountManager, upstream, retryCount + 1, hooks, reqId, ctx, logDir, sx, route);
     }
     ctx.status = 502;
@@ -868,6 +954,9 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
       // sees a broken response and retries instead of hanging on an open socket.
       res.destroy();
     }
+  }
+  } finally {
+    releaseLease();
   }
 }
 
@@ -1021,12 +1110,15 @@ export function rewriteModel(body, modelMap) {
   return body;
 }
 
-function computeRetryAfter(accounts) {
+function computeRetryAfter(accounts, model = null, accountManager = null) {
   let soonest = Infinity;
   for (const acct of accounts) {
     const reset = acct.rateLimitedUntil || acct.quota.resetsAt;
-    if (reset) {
-      const ms = new Date(reset).getTime() - Date.now();
+    const resetMs = reset ? new Date(reset).getTime() : 0;
+    const scopedMs = accountManager?.rateLimitedUntilFor(acct.index, model) || 0;
+    const readyAt = Math.max(resetMs, scopedMs);
+    if (readyAt) {
+      const ms = readyAt - Date.now();
       if (ms < soonest) soonest = ms;
     }
   }
