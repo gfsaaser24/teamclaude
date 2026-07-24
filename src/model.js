@@ -10,7 +10,7 @@ export function isFableModel(model) {
 }
 
 // The model "family" a request belongs to. Anthropic meters some families with
-// their own weekly quota bucket (Fable, Sonnet, Opus) on top of the shared 5-hour and
+// their own weekly quota bucket (Fable, Sonnet) on top of the shared 5-hour and
 // weekly buckets, so the family decides which bucket governs a given request —
 // letting an account whose Fable bucket is spent keep serving Opus/Sonnet.
 // Returns a stable lowercase tag; unknown ids fall back to 'other'.
@@ -29,7 +29,6 @@ export function modelFamily(model) {
 const FAMILY_WEEKLY_BUCKET = {
   fable: 'unified7dFable',
   sonnet: 'unified7dSonnet',
-  opus: 'unified7dOpus',
 };
 
 // The weekly quota bucket key that governs a model, e.g. a Fable request is

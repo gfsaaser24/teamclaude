@@ -5,9 +5,7 @@ import { weeklyBucketForModel, modelGlobMatches } from './model.js';
 // Bucket keys stamped with an `observedAt` time when their utilization is
 // refreshed from a real upstream response or probe. The 5h/weekly unified
 // buckets plus a single `standard` slot for API-key token/request limits.
-const OBSERVED_BUCKETS = [
-  'unified5h', 'unified7d', 'unified7dSonnet', 'unified7dFable', 'unified7dOpus', 'standard',
-];
+const OBSERVED_BUCKETS = ['unified5h', 'unified7d', 'unified7dSonnet', 'unified7dFable', 'standard'];
 
 // Re-exported for callers that already import model helpers from here.
 export { isFableModel, modelFamily, parseRequestModel, weeklyBucketForModel, modelGlobMatches } from './model.js';
@@ -16,8 +14,8 @@ export { isFableModel, modelFamily, parseRequestModel, weeklyBucketForModel, mod
 // windows, learned passively from upstream responses. Transient/derived state
 // (probing, requalify, rateLimitedUntil) is intentionally excluded.
 const PERSISTED_QUOTA_FIELDS = [
-  'unified5h', 'unified7d', 'unified7dSonnet', 'unified7dFable', 'unified7dOpus',
-  'unified5hReset', 'unified7dReset', 'unified7dSonnetReset', 'unified7dFableReset', 'unified7dOpusReset', 'unifiedStatus',
+  'unified5h', 'unified7d', 'unified7dSonnet', 'unified7dFable',
+  'unified5hReset', 'unified7dReset', 'unified7dSonnetReset', 'unified7dFableReset', 'unifiedStatus',
   'tokensLimit', 'tokensRemaining', 'requestsLimit', 'requestsRemaining', 'resetsAt',
 ];
 
@@ -33,12 +31,10 @@ function emptyQuota() {
     unified7d: null,            // utilization 0-1
     unified7dSonnet: null,      // utilization 0-1 (Sonnet-specific weekly bucket)
     unified7dFable: null,       // utilization 0-1 (Fable-specific weekly bucket)
-    unified7dOpus: null,        // utilization 0-1 (Opus-specific weekly bucket)
     unified5hReset: null,       // ms timestamp
     unified7dReset: null,       // ms timestamp
     unified7dSonnetReset: null, // ms timestamp
     unified7dFableReset: null,  // ms timestamp
-    unified7dOpusReset: null,   // ms timestamp
     unifiedStatus: null,        // allowed | allowed_warning | rejected
     resetsAt: null,
   };
@@ -394,8 +390,7 @@ export class AccountManager {
   }
 
   /** Utilization (0-1) of the weekly bucket that governs `model` on this account:
-   * unified7dFable for Fable, unified7dSonnet for Sonnet, unified7dOpus for
-   * Opus, unified7d otherwise.
+   * unified7dFable for Fable, unified7dSonnet for Sonnet, unified7d otherwise.
    * Falls back to the shared unified7d when a family-specific bucket isn't
    * reported. Returns null when nothing is known. */
   _governingWeekly(account, model) {
@@ -445,7 +440,7 @@ export class AccountManager {
       if (!this._isProbeable(account)) continue;
       if (this._isBucketRateLimited(account, model)) continue;
       // A family-exhausted account can't serve that family even as a probe — it
-      // would just 429 again — so skip it (Fable/Sonnet/Opus) and let the caller emit
+      // would just 429 again — so skip it (Fable/Sonnet) and let the caller emit
       // the synthetic 429 when no other account is available.
       if (model && this._modelWeeklyExhausted(account, model)) continue;
       // Same for routing/ownership: a probe for a routed or owned model must not
@@ -490,7 +485,7 @@ export class AccountManager {
     if (account.status === 'exhausted' || account.status === 'error') return false;
     if (this._isBucketRateLimited(account, model)) return false;
     // Model-scoped: _isNearQuota checks the shared 5h bucket plus only the weekly
-    // bucket that governs this model, so a spent Fable/Sonnet/Opus bucket bars just
+    // bucket that governs this model, so a spent Fable/Sonnet bucket bars just
     // that family — the account still serves every other model normally.
     if (this._isNearQuota(account, model)) return false;
 
@@ -595,10 +590,6 @@ export class AccountManager {
         'anthropic-ratelimit-unified-7d-sonnet-status',
         'anthropic-ratelimit-unified-7d_sonnet-status',
       ],
-      unified7dOpus: [
-        'anthropic-ratelimit-unified-7d-opus-status',
-        'anthropic-ratelimit-unified-7d_opus-status',
-      ],
     };
     return statusHeaders[governing]?.some(rejected) ? governing : null;
   }
@@ -646,9 +637,6 @@ export class AccountManager {
     }
     if (this.accounts.some(a => a.quota.unified7dSonnet != null)) {
       detected.push({ name: 'sonnet', match: ['*sonnet*'], sample: 'claude-sonnet-4-6' });
-    }
-    if (this.accounts.some(a => a.quota.unified7dOpus != null)) {
-      detected.push({ name: 'opus', match: ['*opus*'], sample: 'claude-opus-5' });
     }
     for (const d of detected) {
       if (this._routeForModel(d.sample)) continue; // already covered by a configured route
@@ -705,11 +693,6 @@ export class AccountManager {
     if (q.unified7dFable != null && q.unified7dFableReset && now >= q.unified7dFableReset) {
       q.unified7dFable = null;
       q.unified7dFableReset = null;
-      changed = true;
-    }
-    if (q.unified7dOpus != null && q.unified7dOpusReset && now >= q.unified7dOpusReset) {
-      q.unified7dOpus = null;
-      q.unified7dOpusReset = null;
       changed = true;
     }
 
@@ -1031,8 +1014,8 @@ export class AccountManager {
 
   /**
    * Apply quota learned from the OAuth usage endpoint (the background probe).
-   * Updates utilization/reset for the 5h, 7d, Sonnet-7d, Fable-7d, and Opus-7d
-   * buckets WITHOUT touching usage counters — a probe is not real client traffic.
+   * Updates utilization/reset for the 5h, 7d, Sonnet-7d, and Fable-7d buckets WITHOUT
+   * touching usage counters — a probe is not real client traffic.
    */
   applyUsageData(accountIndex, usage) {
     const account = this.accounts[accountIndex];
@@ -1057,10 +1040,6 @@ export class AccountManager {
     if (usage.sevenDayFable) {
       if (usage.sevenDayFable.utilization != null) { q.unified7dFable = usage.sevenDayFable.utilization; account.observedAt.unified7dFable = now; }
       if (usage.sevenDayFable.resetAt != null) q.unified7dFableReset = usage.sevenDayFable.resetAt;
-    }
-    if (usage.sevenDayOpus) {
-      if (usage.sevenDayOpus.utilization != null) { q.unified7dOpus = usage.sevenDayOpus.utilization; account.observedAt.unified7dOpus = now; }
-      if (usage.sevenDayOpus.resetAt != null) q.unified7dOpusReset = usage.sevenDayOpus.resetAt;
     }
 
     // If we just learned this account's weekly window while probing, re-evaluate

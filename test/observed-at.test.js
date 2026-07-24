@@ -20,7 +20,6 @@ test('updateQuota stamps observedAt for the buckets it learns from a live respon
   assert.ok(oa.unified7dFable >= before, 'fable weekly stamped');
   // A bucket not present in the headers was never observed.
   assert.equal(oa.unified7dSonnet, undefined);
-  assert.equal(oa.unified7dOpus, undefined);
 });
 
 test('updateQuota stamps the standard bucket for API-key token/request limits', () => {
@@ -35,12 +34,8 @@ test('updateQuota stamps the standard bucket for API-key token/request limits', 
 test('applyUsageData (probe) stamps observedAt like a real response', () => {
   const am = new AccountManager([oauth('a')], 0.98);
   const before = Date.now();
-  am.applyUsageData(0, {
-    sevenDayFable: { utilization: 0.5, resetAt: Date.now() + 1000 },
-    sevenDayOpus: { utilization: 0.4, resetAt: Date.now() + 1000 },
-  });
+  am.applyUsageData(0, { sevenDayFable: { utilization: 0.5, resetAt: Date.now() + 1000 } });
   assert.ok(am.accounts[0].observedAt.unified7dFable >= before);
-  assert.ok(am.accounts[0].observedAt.unified7dOpus >= before);
 });
 
 test('getStatus exposes stable id, email, and per-bucket observedAt (ISO)', () => {

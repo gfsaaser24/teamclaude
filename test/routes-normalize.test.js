@@ -91,21 +91,6 @@ test('exportRoutes returns editable routes without autocreated/eligibility view'
   ]);
 });
 
-test('getRoutes auto-creates an Opus route when its weekly bucket is observed', () => {
-  const am = new AccountManager([oauth('a')], 0.98);
-  am.applyUsageData(0, {
-    sevenDayOpus: { utilization: 0.4, resetAt: Date.now() + 3600_000 },
-  });
-
-  assert.deepEqual(am.getRoutes(), [{
-    name: 'opus',
-    match: ['*opus*'],
-    bucket: null,
-    autocreated: true,
-    accounts: [{ name: 'a', eligible: true }],
-  }]);
-});
-
 // ── migrateCorruptRoutes (one-time config cleanup) ───────────────────────────
 
 test('migrateCorruptRoutes sanitizes object/[object Object] entries and reports change', () => {

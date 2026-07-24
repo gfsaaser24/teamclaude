@@ -778,7 +778,7 @@ export class TUI {
     const q = a.quota;
     let r1 = null, r2 = null, l1 = 'Ses', l2 = 'Wk ', t1 = null, t2 = null;
 
-    if (q.unified5h != null || q.unified7d != null || q.unified7dSonnet != null || q.unified7dFable != null || q.unified7dOpus != null) {
+    if (q.unified5h != null || q.unified7d != null || q.unified7dSonnet != null || q.unified7dFable != null) {
       r1 = q.unified5h;
       r2 = q.unified7d;
       t1 = q.unified5hReset;
@@ -805,10 +805,6 @@ export class TUI {
       if (q.unified7dFable != null) {
         line += `  F7  ${bar(q.unified7dFable, bw, q.unified7dFableReset)}`;
       }
-      // Opus weekly bar — only shown when the usage probe has populated it.
-      if (q.unified7dOpus != null) {
-        line += `  O7  ${bar(q.unified7dOpus, bw, q.unified7dOpusReset)}`;
-      }
     }
     // Explicit "disabled for these models" tag (issue #85): a family whose own
     // weekly bucket is over the switch threshold can't serve that model even
@@ -818,7 +814,6 @@ export class TUI {
     const blocked = [];
     if (q.unified7dSonnet != null && q.unified7dSonnet >= th) blocked.push('Sonnet');
     if (q.unified7dFable != null && q.unified7dFable >= th) blocked.push('Fable');
-    if (q.unified7dOpus != null && q.unified7dOpus >= th) blocked.push('Opus');
     if (blocked.length) line += `  ${red('⊘ ' + blocked.join(' '))}`;
     return line;
   }

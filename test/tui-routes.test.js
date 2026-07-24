@@ -97,21 +97,3 @@ test('TUI routes editor: delete removes the selected route', async () => {
   assert.deepEqual(config.routes, [{ name: 'bulk', match: ['*opus*'] }]);
   assert.deepEqual(applied.routes, config.routes);
 });
-
-test('TUI account row shows Opus weekly quota and model blocking', () => {
-  const { tui } = makeTUI();
-  tui.am.accounts[0] = {
-    name: 'a', type: 'oauth', status: 'active', disabled: false,
-    quota: {
-      unified5h: 0.2,
-      unified7d: 0.3,
-      unified7dOpus: 1,
-      unified7dOpusReset: Date.now() + 3600_000,
-    },
-  };
-
-  const line = tui._renderAcct(0, 8, true);
-  assert.match(line, /O7/);
-  assert.match(line, /Opus/);
-  assert.doesNotMatch(line, /S7|F7/);
-});

@@ -212,9 +212,8 @@ export function normalizeUsageBucket(bucket) {
 /**
  * Fetch OAuth subscription usage from the usage endpoint. This reports quota
  * utilization WITHOUT spending message quota, which is what makes it safe to
- * poll. Returns normalized
- * { fiveHour, sevenDay, sevenDaySonnet, sevenDayFable, sevenDayOpus } buckets,
- * or { error, status } on failure.
+ * poll. Returns normalized { fiveHour, sevenDay, sevenDaySonnet, sevenDayFable } buckets, or
+ * { error, status } on failure.
  */
 export async function fetchUsage(accessToken) {
   try {
@@ -243,8 +242,6 @@ export async function fetchUsage(accessToken) {
       sevenDay: normalizeUsageBucket(data?.seven_day),
       sevenDaySonnet: normalizeUsageBucket(data?.seven_day_sonnet),
       sevenDayFable: normalizeUsageBucket(findScopedWeeklyLimit(data, /fable/i)),
-      sevenDayOpus: normalizeUsageBucket(data?.seven_day_opus)
-        || normalizeUsageBucket(findScopedWeeklyLimit(data, /opus/i)),
     };
   } catch (err) {
     return { error: err.message || String(err), status: null };
