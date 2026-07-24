@@ -43,3 +43,19 @@ Contract (frozen, foreman-owned): src/shared/teamclaude-types.ts @ orca 18afe148
 - [T3-f2] Cosmetic: PR/issue attribution footers still link stablyai/orca (terminal-attribution.ts:569,603). Optional.
 - [T9-c1] TC_MIN_SERVER_VERSION=1.5.0 is a placeholder and WRONG vs reality: Phase 0 SHIPPED as v1.2.0 (teamclaude master @327c0eb). Set constant to '1.2.0' at integration (teamclaude-model.ts).
 - [T9-n1] es/ja/ko/zh carry stale English copy for pinHint/stopBodyIdle (append-only consequence) — phase-7 translation item.
+
+## Wave 2 — CLIProxyAPI "Backends" build (2026-07-24)
+Spec: orca-ide docs/superpowers/specs/2026-07-24-cliproxyapi-backends-design.md (v1.1 + §12 deltas D1-D11 folded from codex MAX RETHINK + K3 SHIP-WITH-FIXES reviews). Workers: codex gpt-5.6-sol (W2 max, rest xhigh) in ONE shared orca tree, disjoint file sets; teamclaude lane separate. Orchestrator verified every slice outside the worker sandbox before committing.
+
+| Lane | Scope | Result |
+|---|---|---|
+| W1 | teamclaude POST /teamclaude/account backend fields (upstream/models/modelMap live-apply) + account-scoped upstream-failure holds (never egress breaker) + capability account.backend | VERIFIED @619b3d5 — 38 focused tests, eslint clean |
+| W1b | D2 delta: apikey create-on-unknown-id upsert (disk-first + live-register, idempotent), upstream canonicalized to exactly http://127.0.0.1:<port> (path/query/fragment/userinfo rejected), atomicConfigUpdate temp+rename w/ failure unlink; startup already loads apikey accounts (new x-api-key restart test) | VERIFIED @946c245 — full corpus 324: only the known 11 env failures |
+| W2 | Generic service-supervisor core (src/main/services) + teamclaude adapter (21/21 floor byte-identical) + cliproxyapi profile (owned-only adoption, dedicated port, owned-unready restart) | VERIFIED @fa111f412 — 74/74 across 9 files |
+| W3 | CPA core: config-owner (port 8319, panel off, no is_webui, D11 manifest drift + stop-write-start regen), fail-fast management client (forbidden methods absent), provisioning upsert gated on account.backend, init singleton, IPC w/ isTrustedUIRenderer both directions, settings cliproxyPort/cliproxyBinaryPath | VERIFIED @f3181ad02 (union commit w/ W4) — 34/34 CPA dir |
+| W4 | oauth-flows (no is_webui), models-sync (fail-closed EXCLUSIVE route cliproxy-backends, tombstones, generation-serialized), usage-aggregator (whitelist-at-pop, latency reservoir) | VERIFIED, committed in @f3181ad02 — 16/16 |
+| W5 | Renderer: Backends tab + 7 subcomponents, ServiceCard/Services tab, useCliproxy hook, backend-account filtering (Accounts/Flyout), 100 i18n keys x5 locales EOL-preserved | VERIFIED @521d300a1 — 66/66 across 11 files, both localization gates |
+
+Integration gates: full node+cli+web typecheck clean; full vitest 31,500 pass / 116 fail across 36 files — ZERO overlap with wave-touched areas (known machine-environmental set: relay/PTY, ssh, hosted-review, native-chat, editor). Seam W4→TC control closed by W3's teamclaude-backend-connector (getRoutes/setRoutes/setAccount). Pushed: gfsaaser24/orca main @f3181ad02, gfsaaser24/teamclaude master @946c245. Live proxy restarted (auto-restarted by supervisor, PID 49740, bootId 090abcf7) — account.backend advertised.
+
+Remaining for CPA feature: download/pin an official CLIProxyAPI release binary + first-run E2E through the Backends tab (needs GUI); installer rebuild when next NSIS wave runs.
