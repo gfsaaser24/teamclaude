@@ -17,6 +17,68 @@ export const HOP_BY_HOP_HEADERS = new Set([
   'te', 'trailer', 'upgrade', 'proxy-authorization', 'proxy-authenticate',
 ]);
 const INLINE_RETRY_AFTER_MAX_SECONDS = 15;
+const ACCOUNT_UPSTREAM_TRANSIENT_SECONDS = 5;
+const ACCOUNT_UPSTREAM_CONNECTION_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT']);
+
+function errorHasCode(error, codes) {
+  const pending = [error];
+  const seen = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (!current || (typeof current !== 'object' && typeof current !== 'function') || seen.has(current)) continue;
+    seen.add(current);
+    if (codes.has(current.code)) return true;
+    if (current.cause) pending.push(current.cause);
+    if (Array.isArray(current.errors)) pending.push(...current.errors);
+  }
+  return false;
+}
+
+function normalizeAccountBackendFields(payload) {
+  const normalized = {};
+  const has = key => Object.prototype.hasOwnProperty.call(payload, key);
+
+  if (has('upstream')) {
+    if (typeof payload.upstream !== 'string') {
+      const err = new Error('invalid_upstream');
+      err.code = 'invalid_upstream';
+      throw err;
+    }
+    const upstream = payload.upstream.trim();
+    let parsed;
+    try { parsed = new URL(upstream); } catch { /* handled below */ }
+    const hostname = parsed?.hostname.toLowerCase();
+    if (parsed?.protocol !== 'http:'
+        || !['127.0.0.1', 'localhost', '[::1]'].includes(hostname)) {
+      const err = new Error('invalid_upstream');
+      err.code = 'invalid_upstream';
+      throw err;
+    }
+    normalized.upstream = upstream;
+  }
+
+  if (has('models')) {
+    if (!Array.isArray(payload.models)
+        || payload.models.some(model => typeof model !== 'string' || !model.trim())) {
+      const err = new Error('invalid_payload');
+      err.code = 'invalid_payload';
+      throw err;
+    }
+    normalized.models = [...new Set(payload.models.map(model => model.trim()))];
+  }
+
+  if (has('modelMap')) {
+    if (!payload.modelMap || typeof payload.modelMap !== 'object' || Array.isArray(payload.modelMap)
+        || Object.values(payload.modelMap).some(model => typeof model !== 'string')) {
+      const err = new Error('invalid_payload');
+      err.code = 'invalid_payload';
+      throw err;
+    }
+    normalized.modelMap = { ...payload.modelMap };
+  }
+
+  return normalized;
+}
 
 // A bare 429 (even one whose JSON error type is `rate_limit_error`) is not proof
 // that the selected account exhausted quota. Rotate only when upstream supplies
@@ -76,6 +138,7 @@ export function isLoopbackAddr(addr) {
 export const SERVER_CAPABILITIES = Object.freeze([
   'routes.rw',          // GET/POST /teamclaude/routes (validated, atomic apply)
   'account.write',      // POST /teamclaude/account (disabled/priority by stable id)
+  'account.backend',    // account-scoped loopback upstream + model ownership/mapping
   'certs.ensure',       // POST /teamclaude/certs/ensure (shared CONNECT cert lock)
   'status.identity',    // per-account stable id + email + per-bucket observedAt
   'events.durationMs',  // request-end events carry durationMs
@@ -242,8 +305,20 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         if (typeof id !== 'string' || !id.trim()) { sendJson(res, 400, { ok: false, error: 'id (string) is required' }); return; }
         if (payload.disabled != null && typeof payload.disabled !== 'boolean') { sendJson(res, 400, { ok: false, error: 'disabled must be a boolean' }); return; }
         if (payload.priority != null && (typeof payload.priority !== 'number' || !Number.isFinite(payload.priority))) { sendJson(res, 400, { ok: false, error: 'priority must be a finite number' }); return; }
+        let backendFields;
+        try { backendFields = normalizeAccountBackendFields(payload); }
+        catch (err) {
+          const error = err?.code === 'invalid_upstream' ? 'invalid_upstream' : 'invalid_payload';
+          sendJson(res, 400, { ok: false, error });
+          return;
+        }
         try {
-          const result = await hooks.setAccount({ id: id.trim(), disabled: payload.disabled, priority: payload.priority });
+          const result = await hooks.setAccount({
+            id: id.trim(),
+            disabled: payload.disabled,
+            priority: payload.priority,
+            ...backendFields,
+          });
           // Unknown id → 400 unknown_account, NOT 404. The desktop treats a 404 on
           // this endpoint as "endpoint unsupported" and silently falls back to a
           // legacy config write; a real "no such account" must surface as an error.
@@ -910,13 +985,28 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
     const l = getLog();
     if (l) { l.write(`\n\n=== ERROR ===\n${err.stack || err.message}`); l.end(); }
 
+    const transientCodes = new Set([
+      'TEAMCLAUDE_HEADERS_TIMEOUT', 'TEAMCLAUDE_BODY_TIMEOUT',
+      'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT',
+      'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+    ]);
     const isTransient = err instanceof Error &&
-      (err.code === 'TEAMCLAUDE_HEADERS_TIMEOUT' || err.code === 'TEAMCLAUDE_BODY_TIMEOUT' ||
-        err.name === 'TimeoutError' || err.name === 'AbortError' ||
-        err.message.includes('fetch failed') ||
-        err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' ||
-        err.code === 'ETIMEDOUT' || err.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-        err.code === 'UND_ERR_HEADERS_TIMEOUT' || err.code === 'UND_ERR_BODY_TIMEOUT');
+      (err.name === 'TimeoutError' || err.name === 'AbortError' ||
+        err.message.includes('fetch failed') || errorHasCode(err, transientCodes));
+
+    // A connection-level failure on a per-account upstream is local evidence:
+    // briefly hold only that account so unrelated accounts keep serving. This
+    // must never open the shared egress breaker, which is reserved for opaque
+    // 429 responses from shared egress.
+    if (account.upstream && errorHasCode(err, ACCOUNT_UPSTREAM_CONNECTION_CODES)) {
+      accountManager.markRateLimited(account.index, ACCOUNT_UPSTREAM_TRANSIENT_SECONDS);
+      ctx.status = res.headersSent ? ctx.status : 502;
+      ctx.retryAfter = ACCOUNT_UPSTREAM_TRANSIENT_SECONDS;
+      ctx.limiterClass = 'transient';
+      console.log(`[TeamClaude] Custom upstream connection failure on "${account.name}" - account held for ${ACCOUNT_UPSTREAM_TRANSIENT_SECONDS}s`);
+      res.destroy();
+      return;
+    }
 
     // Transient network errors (including a stale-socket headers/body timeout):
     // close the connection and let the client retry. Failing over to another

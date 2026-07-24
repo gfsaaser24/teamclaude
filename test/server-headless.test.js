@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,12 +46,33 @@ test('server --headless exposes the version/bootId/capabilities envelope + accou
     assert.equal(typeof status.bootId, 'string');
     assert.ok(Array.isArray(status.capabilities));
     assert.ok(status.capabilities.includes('routes.rw'));
+    assert.ok(status.capabilities.includes('account.backend'));
     assert.ok(status.capabilities.includes('status.identity'));
 
     const acct = status.accounts[0];
     assert.equal(acct.id, 'name:k1');                        // stable id (API-key fallback)
     assert.ok('email' in acct);
     assert.equal(typeof acct.observedAt, 'object');
+
+    const update = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'tc-int-key', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'name:k1',
+        upstream: 'http://127.0.0.1:8317',
+        models: ['orca-fast', 'orca-fast'],
+        modelMap: { 'claude-sonnet-4-6': 'orca-fast' },
+      }),
+    });
+    assert.equal(update.status, 200);
+    const updated = await update.json();
+    assert.equal(updated.account.upstream, 'http://127.0.0.1:8317');
+    assert.deepEqual(updated.account.models, ['orca-fast']);
+    assert.deepEqual(updated.account.modelMap, { 'claude-sonnet-4-6': 'orca-fast' });
+    const diskAccount = JSON.parse(readFileSync(cfgPath, 'utf8')).accounts[0];
+    assert.equal(diskAccount.upstream, 'http://127.0.0.1:8317');
+    assert.deepEqual(diskAccount.models, ['orca-fast']);
+    assert.deepEqual(diskAccount.modelMap, { 'claude-sonnet-4-6': 'orca-fast' });
 
     // /log echoes the same bootId as /status.
     const log = await (await fetch(`http://127.0.0.1:${port}/teamclaude/log`, { headers: { 'x-api-key': 'tc-int-key' } })).json();

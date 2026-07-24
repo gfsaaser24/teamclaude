@@ -351,7 +351,7 @@ async function serverCommand() {
   // Account control (item 2): flip disabled / set priority by stable id (name
   // dual-accepted). Applies to the live AccountManager and persists to config,
   // both before returning. Returns the updated account view, or null if no match.
-  hooks.setAccount = async ({ id, disabled, priority }) => {
+  hooks.setAccount = async ({ id, disabled, priority, upstream, models, modelMap }) => {
     const idx = accountManager.accounts.findIndex(a => accountStableId(a) === id || a.name === id);
     if (idx < 0) return null;
     const mgr = accountManager.accounts[idx];
@@ -364,17 +364,34 @@ async function serverCommand() {
       if (cfgIdx < 0) return;
       if (disabled != null) { if (disabled) diskConfig.accounts[cfgIdx].disabled = true; else delete diskConfig.accounts[cfgIdx].disabled; }
       if (priority != null) diskConfig.accounts[cfgIdx].priority = priority;
+      if (upstream !== undefined) diskConfig.accounts[cfgIdx].upstream = upstream;
+      if (models !== undefined) diskConfig.accounts[cfgIdx].models = [...models];
+      if (modelMap !== undefined) diskConfig.accounts[cfgIdx].modelMap = { ...modelMap };
     });
     // Disk committed — now apply live state and keep the in-memory config copy in
     // step so a later TUI/save doesn't revert it.
     if (disabled != null) accountManager.setDisabled(idx, disabled);
     if (priority != null) mgr.priority = priority;
+    if (upstream !== undefined) mgr.upstream = upstream;
+    if (models !== undefined) mgr.models = [...models];
+    if (modelMap !== undefined) mgr.modelMap = { ...modelMap };
     const memIdx = config.accounts.findIndex(a => sameIdentity(a, mgr) || a.name === mgr.name);
     if (memIdx >= 0) {
       if (disabled != null) { if (disabled) config.accounts[memIdx].disabled = true; else delete config.accounts[memIdx].disabled; }
       if (priority != null) config.accounts[memIdx].priority = priority;
+      if (upstream !== undefined) config.accounts[memIdx].upstream = upstream;
+      if (models !== undefined) config.accounts[memIdx].models = [...models];
+      if (modelMap !== undefined) config.accounts[memIdx].modelMap = { ...modelMap };
     }
-    return { id: accountStableId(mgr), name: mgr.name, disabled: mgr.disabled || false, priority: mgr.priority || 0 };
+    return {
+      id: accountStableId(mgr),
+      name: mgr.name,
+      disabled: mgr.disabled || false,
+      priority: mgr.priority || 0,
+      upstream: mgr.upstream,
+      models: mgr.models,
+      modelMap: mgr.modelMap,
+    };
   };
 
   // Browser OAuth login driven from the desktop UI. Runs the same loginOAuth

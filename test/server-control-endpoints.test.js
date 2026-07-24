@@ -22,13 +22,24 @@ const CONFIG = { proxy: { apiKey: 'k' }, upstream: 'https://api.anthropic.com' }
 function controlHooks(am) {
   return {
     setRoutes: async (routes) => { am.setRoutes(routes); },
-    setAccount: async ({ id, disabled, priority }) => {
+    setAccount: async ({ id, disabled, priority, upstream, models, modelMap }) => {
       const idx = am.accounts.findIndex(a => accountStableId(a) === id || a.name === id);
       if (idx < 0) return null;
       const mgr = am.accounts[idx];
       if (disabled != null) am.setDisabled(idx, disabled);
       if (priority != null) mgr.priority = priority;
-      return { id: accountStableId(mgr), name: mgr.name, disabled: mgr.disabled || false, priority: mgr.priority || 0 };
+      if (upstream !== undefined) mgr.upstream = upstream;
+      if (models !== undefined) mgr.models = models;
+      if (modelMap !== undefined) mgr.modelMap = modelMap;
+      return {
+        id: accountStableId(mgr),
+        name: mgr.name,
+        disabled: mgr.disabled || false,
+        priority: mgr.priority || 0,
+        upstream: mgr.upstream,
+        models: mgr.models,
+        modelMap: mgr.modelMap,
+      };
     },
     // Mirrors index.js hooks.pinAccount: null token clears; an unknown token sets
     // no pin and signals {ok:false} so the endpoint returns 400 unknown_account.
@@ -156,6 +167,67 @@ test('POST /teamclaude/account accepts a plain name (deprecation window) and set
     });
     assert.equal(res.status, 200);
     assert.equal(am.accounts[1].priority, -3);
+  });
+});
+
+test('POST /teamclaude/account applies a loopback backend live and model ownership selects it', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST',
+      headers: KEY,
+      body: JSON.stringify({
+        id: 'beta',
+        upstream: 'http://localhost:8317/anthropic',
+        models: ['orca-fast', ' orca-pro ', 'orca-fast'],
+        modelMap: { 'claude-sonnet-4-6': 'orca-pro' },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.account.upstream, 'http://localhost:8317/anthropic');
+    assert.deepEqual(body.account.models, ['orca-fast', 'orca-pro']);
+    assert.deepEqual(body.account.modelMap, { 'claude-sonnet-4-6': 'orca-pro' });
+
+    assert.equal(am.accounts[1].upstream, 'http://localhost:8317/anthropic');
+    assert.deepEqual(am.accounts[1].models, ['orca-fast', 'orca-pro']);
+    assert.deepEqual(am.accounts[1].modelMap, { 'claude-sonnet-4-6': 'orca-pro' });
+    assert.equal(am.getActiveAccount(null, 'orca-pro')?.name, 'beta');
+  });
+});
+
+test('POST /teamclaude/account rejects a non-loopback upstream', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST',
+      headers: KEY,
+      body: JSON.stringify({ id: 'beta', upstream: 'http://backend.example.com' }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, 'invalid_upstream');
+    assert.equal(am.accounts[1].upstream, null);
+  });
+});
+
+test('POST /teamclaude/account rejects malformed models and modelMap', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const payloads = [
+      { id: 'beta', models: 'orca-fast' },
+      { id: 'beta', models: ['orca-fast', '  '] },
+      { id: 'beta', models: ['orca-fast', 42] },
+      { id: 'beta', modelMap: { 'claude-sonnet-4-6': 42 } },
+      { id: 'beta', modelMap: [] },
+    ];
+    for (const payload of payloads) {
+      const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+        method: 'POST',
+        headers: KEY,
+        body: JSON.stringify(payload),
+      });
+      assert.equal(res.status, 400);
+      assert.equal((await res.json()).error, 'invalid_payload');
+    }
+    assert.equal(am.accounts[1].models, null);
+    assert.equal(am.accounts[1].modelMap, null);
   });
 });
 

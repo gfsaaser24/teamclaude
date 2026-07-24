@@ -9,6 +9,13 @@ function listen(server) {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
+async function unusedLoopbackPort() {
+  const server = http.createServer();
+  const port = await listen(server);
+  await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  return port;
+}
+
 test('429 classification requires account-quota evidence', () => {
   assert.equal(typeof serverModule.classifyRateLimit429, 'function');
   const { classifyRateLimit429 } = serverModule;
@@ -182,6 +189,62 @@ test('generic 429 opens a shared egress breaker without rotating or throttling a
   } finally {
     proxy.close();
     upstream.close();
+  }
+});
+
+test('refused custom upstream throttles only its account and leaves shared egress serving', async () => {
+  const refusedPort = await unusedLoopbackPort();
+  const healthyTokens = [];
+  const healthyUpstream = http.createServer((req, res) => {
+    healthyTokens.push(req.headers.authorization);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  const healthyPort = await listen(healthyUpstream);
+  const am = new AccountManager([
+    {
+      name: 'custom',
+      type: 'oauth',
+      accessToken: 'custom-token',
+      upstream: `http://127.0.0.1:${refusedPort}`,
+      models: ['custom-model'],
+      priority: -1,
+    },
+    { name: 'healthy', type: 'oauth', accessToken: 'healthy-token' },
+  ], 0.98);
+  const completed = [];
+  const proxy = createProxyServer(am, {
+    proxy: { apiKey: 'k' },
+    upstream: `http://127.0.0.1:${healthyPort}`,
+  }, {
+    onRequestEnd: (_id, info) => completed.push(info),
+  });
+  const proxyPort = await listen(proxy);
+  const request = model => fetch(`http://127.0.0.1:${proxyPort}/v1/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model, messages: [] }),
+  });
+
+  try {
+    await assert.rejects(request('custom-model'));
+
+    assert.equal(completed[0]?.limiterClass, 'transient');
+    assert.equal(am.accounts[0].status, 'throttled');
+    assert.equal(am.accounts[1].status, 'active');
+    const remainingMs = am.accounts[0].rateLimitedUntil - Date.now();
+    assert.ok(remainingMs > 0 && remainingMs <= 15_000, 'custom account gets only a short hold');
+    assert.equal(am.getEgressBreaker().open, false, 'custom connection failure must not open shared breaker');
+
+    const healthy = await request('general-model');
+    assert.equal(healthy.status, 200);
+    await healthy.text();
+    assert.deepEqual(healthyTokens, ['Bearer healthy-token']);
+    assert.equal(am.accounts[1].status, 'active');
+    assert.equal(am.getEgressBreaker().open, false);
+  } finally {
+    proxy.close();
+    healthyUpstream.close();
   }
 });
 
