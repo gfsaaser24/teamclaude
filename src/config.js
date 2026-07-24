@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
+import { renameSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -87,6 +88,16 @@ export async function saveConfig(config) {
 export async function atomicConfigUpdate(updater) {
   const config = await loadConfig() || createDefaultConfig();
   await updater(config);
-  await saveConfig(config);
+  const path = getConfigPath();
+  const tempPath = `${path}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(tempPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+    await chmod(tempPath, 0o600).catch(() => {});
+    renameSync(tempPath, path);
+  } catch (err) {
+    try { unlinkSync(tempPath); } catch { /* best effort */ }
+    throw err;
+  }
   return config;
 }

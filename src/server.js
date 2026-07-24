@@ -49,12 +49,17 @@ function normalizeAccountBackendFields(payload) {
     try { parsed = new URL(upstream); } catch { /* handled below */ }
     const hostname = parsed?.hostname.toLowerCase();
     if (parsed?.protocol !== 'http:'
-        || !['127.0.0.1', 'localhost', '[::1]'].includes(hostname)) {
+        || !['127.0.0.1', 'localhost', '[::1]'].includes(hostname)
+        || parsed.pathname !== '/'
+        || parsed.search
+        || parsed.hash
+        || parsed.username
+        || parsed.password) {
       const err = new Error('invalid_upstream');
       err.code = 'invalid_upstream';
       throw err;
     }
-    normalized.upstream = upstream;
+    normalized.upstream = `http://127.0.0.1:${parsed.port || '80'}`;
   }
 
   if (has('models')) {
@@ -315,6 +320,8 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
         try {
           const result = await hooks.setAccount({
             id: id.trim(),
+            type: payload.type,
+            apiKey: payload.apiKey,
             disabled: payload.disabled,
             priority: payload.priority,
             ...backendFields,

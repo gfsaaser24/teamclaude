@@ -1,11 +1,44 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import http from 'node:http';
+import net from 'node:net';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AccountManager } from '../src/account-manager.js';
 import { createProxyServer, isMutationRequest } from '../src/server.js';
 import { accountStableId } from '../src/identity.js';
 
+const ENTRY = resolve(fileURLToPath(import.meta.url), '..', '..', 'src', 'index.js');
+
 function listen(server) {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+}
+
+function freePort() {
+  return new Promise((resolvePort) => {
+    const server = net.createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+async function waitForStatus(port, key, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/teamclaude/status`, {
+        headers: { 'x-api-key': key },
+      });
+      if (res.ok) return await res.json();
+    } catch { /* not up yet */ }
+    await new Promise(resolveWait => setTimeout(resolveWait, 150));
+  }
+  throw new Error('server did not become ready');
 }
 
 function makeAM() {
@@ -177,21 +210,55 @@ test('POST /teamclaude/account applies a loopback backend live and model ownersh
       headers: KEY,
       body: JSON.stringify({
         id: 'beta',
-        upstream: 'http://localhost:8317/anthropic',
+        upstream: 'http://localhost:8317/',
         models: ['orca-fast', ' orca-pro ', 'orca-fast'],
         modelMap: { 'claude-sonnet-4-6': 'orca-pro' },
       }),
     });
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.account.upstream, 'http://localhost:8317/anthropic');
+    assert.equal(body.account.upstream, 'http://127.0.0.1:8317');
     assert.deepEqual(body.account.models, ['orca-fast', 'orca-pro']);
     assert.deepEqual(body.account.modelMap, { 'claude-sonnet-4-6': 'orca-pro' });
 
-    assert.equal(am.accounts[1].upstream, 'http://localhost:8317/anthropic');
+    assert.equal(am.accounts[1].upstream, 'http://127.0.0.1:8317');
     assert.deepEqual(am.accounts[1].models, ['orca-fast', 'orca-pro']);
     assert.deepEqual(am.accounts[1].modelMap, { 'claude-sonnet-4-6': 'orca-pro' });
     assert.equal(am.getActiveAccount(null, 'orca-pro')?.name, 'beta');
+  });
+});
+
+test('POST /teamclaude/account normalizes an IPv6 loopback upstream', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST',
+      headers: KEY,
+      body: JSON.stringify({ id: 'beta', upstream: 'http://[::1]:8319' }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).account.upstream, 'http://127.0.0.1:8319');
+    assert.equal(am.accounts[1].upstream, 'http://127.0.0.1:8319');
+  });
+});
+
+test('POST /teamclaude/account rejects a loopback upstream with a path, query, fragment, or userinfo', async () => {
+  await withServer(controlHooks, async ({ port, am }) => {
+    const invalidUpstreams = [
+      'http://127.0.0.1:8319/v1',
+      'http://127.0.0.1:8319/?mode=proxy',
+      'http://127.0.0.1:8319/#proxy',
+      'http://user@127.0.0.1:8319/',
+    ];
+    for (const upstream of invalidUpstreams) {
+      const res = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+        method: 'POST',
+        headers: KEY,
+        body: JSON.stringify({ id: 'beta', upstream }),
+      });
+      assert.equal(res.status, 400);
+      assert.equal((await res.json()).error, 'invalid_upstream');
+    }
+    assert.equal(am.accounts[1].upstream, null);
   });
 });
 
@@ -244,6 +311,118 @@ test('POST /teamclaude/account returns 400 unknown_account for an unknown id (ne
     // No account was touched.
     assert.equal(am.accounts.some(a => a.disabled), false);
   });
+});
+
+test('POST /teamclaude/account creates an API-key account once, live-registers it, and persists it atomically', { timeout: 30000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tc-account-upsert-'));
+  const cfgPath = join(dir, 'teamclaude.json');
+  const port = await freePort();
+  const proxyKey = 'tc-upsert-key';
+  writeFileSync(cfgPath, JSON.stringify({
+    proxy: { port, apiKey: proxyKey },
+    upstream: 'https://api.anthropic.com',
+    accounts: [{ name: 'seed', type: 'apikey', apiKey: 'sk-seed' }],
+  }));
+
+  const env = { ...process.env, TEAMCLAUDE_CONFIG: cfgPath, TEAMCLAUDE_DISABLE_AUTOUPDATE: '1' };
+  const child = spawn(process.execPath, [ENTRY, 'server', '--headless'], { env, stdio: 'ignore' });
+  try {
+    await waitForStatus(port, proxyKey);
+    const payload = {
+      id: 'orca',
+      type: 'apikey',
+      apiKey: 'sk-orca',
+      upstream: 'http://localhost:8319/',
+      models: ['orca-fast'],
+      modelMap: { 'claude-sonnet-4-6': 'orca-fast' },
+      priority: 4,
+    };
+    const create = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST',
+      headers: { 'x-api-key': proxyKey, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(create.status, 200);
+    assert.deepEqual((await create.json()).account, {
+      id: 'name:orca',
+      name: 'orca',
+      disabled: false,
+      priority: 4,
+      upstream: 'http://127.0.0.1:8319',
+      models: ['orca-fast'],
+      modelMap: { 'claude-sonnet-4-6': 'orca-fast' },
+    });
+
+    const status = await waitForStatus(port, proxyKey);
+    assert.ok(status.accounts.some(account => account.id === 'name:orca' && account.name === 'orca'));
+
+    const second = await fetch(`http://127.0.0.1:${port}/teamclaude/account`, {
+      method: 'POST',
+      headers: { 'x-api-key': proxyKey, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(second.status, 200);
+
+    const disk = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    const created = disk.accounts.filter(account => account.name === 'orca');
+    assert.equal(created.length, 1);
+    assert.deepEqual(created[0], {
+      name: 'orca',
+      type: 'apikey',
+      apiKey: 'sk-orca',
+      upstream: 'http://127.0.0.1:8319',
+      models: ['orca-fast'],
+      modelMap: { 'claude-sonnet-4-6': 'orca-fast' },
+      priority: 4,
+    });
+    assert.deepEqual(readdirSync(dir).filter(name => name.includes('.tmp-')), []);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('server restart loads, selects, and injects a persisted API-key account', { timeout: 30000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tc-apikey-restart-'));
+  const cfgPath = join(dir, 'teamclaude.json');
+  const port = await freePort();
+  let upstreamRequest;
+  const upstream = http.createServer((req, res) => {
+    upstreamRequest = { url: req.url, apiKey: req.headers['x-api-key'] };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ type: 'message', content: [] }));
+  });
+  const upstreamPort = await listen(upstream);
+  writeFileSync(cfgPath, JSON.stringify({
+    proxy: { port, apiKey: 'tc-restart-key' },
+    upstream: 'https://api.anthropic.com',
+    accounts: [{
+      name: 'persisted-api',
+      type: 'apikey',
+      apiKey: 'sk-persisted',
+      upstream: `http://127.0.0.1:${upstreamPort}`,
+    }],
+  }));
+
+  const env = { ...process.env, TEAMCLAUDE_CONFIG: cfgPath, TEAMCLAUDE_DISABLE_AUTOUPDATE: '1' };
+  const child = spawn(process.execPath, [ENTRY, 'server', '--headless'], { env, stdio: 'ignore' });
+  try {
+    const status = await waitForStatus(port, 'tc-restart-key');
+    assert.equal(status.currentAccount, 'persisted-api');
+    assert.ok(status.accounts.some(account => account.id === 'name:persisted-api'));
+
+    const proxied = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'tc-restart-key', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', messages: [] }),
+    });
+    assert.equal(proxied.status, 200);
+    assert.deepEqual(upstreamRequest, { url: '/v1/messages', apiKey: 'sk-persisted' });
+  } finally {
+    child.kill();
+    upstream.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('POST /teamclaude/account returns 400 without an id, or with wrong-typed fields', async () => {

@@ -348,12 +348,36 @@ async function serverCommand() {
     accountManager.setRoutes(routes);
   };
 
-  // Account control (item 2): flip disabled / set priority by stable id (name
-  // dual-accepted). Applies to the live AccountManager and persists to config,
-  // both before returning. Returns the updated account view, or null if no match.
-  hooks.setAccount = async ({ id, disabled, priority, upstream, models, modelMap }) => {
+  // Account control (item 2): update by stable id/name, or create a fully
+  // specified API-key account. Applies to the live AccountManager and persists
+  // to config, both before returning. Returns the account view, or null.
+  hooks.setAccount = async ({ id, type, apiKey, disabled, priority, upstream, models, modelMap }) => {
     const idx = accountManager.accounts.findIndex(a => accountStableId(a) === id || a.name === id);
-    if (idx < 0) return null;
+    if (idx < 0) {
+      if (type !== 'apikey' || typeof apiKey !== 'string' || !apiKey.trim() || upstream === undefined) return null;
+      const account = {
+        name: id,
+        type: 'apikey',
+        apiKey: apiKey.trim(),
+        upstream,
+      };
+      if (models !== undefined) account.models = [...models];
+      if (modelMap !== undefined) account.modelMap = { ...modelMap };
+      if (priority != null) account.priority = priority;
+      await atomicConfigUpdate(diskConfig => { diskConfig.accounts.push(account); });
+      config.accounts.push(account);
+      accountManager.addAccount(account);
+      const mgr = accountManager.accounts[accountManager.accounts.length - 1];
+      return {
+        id: accountStableId(mgr),
+        name: mgr.name,
+        disabled: mgr.disabled || false,
+        priority: mgr.priority || 0,
+        upstream: mgr.upstream,
+        models: mgr.models,
+        modelMap: mgr.modelMap,
+      };
+    }
     const mgr = accountManager.accounts[idx];
     // Write-order (item 5c): persist to disk FIRST. If atomicConfigUpdate throws
     // (disk failure), it propagates before any live state is touched, so the
