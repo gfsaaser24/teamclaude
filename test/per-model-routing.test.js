@@ -7,7 +7,7 @@ function oauth(name, extra = {}) {
   return { name, type: 'oauth', accessToken: 't-' + name, refreshToken: 'r', expiresAt: Date.now() + 3600_000, ...extra };
 }
 
-const OPUS = 'claude-opus-4-6';
+const OPUS = 'claude-opus-5';
 const SONNET = 'claude-sonnet-4-6';
 const FABLE = 'claude-fable-5';
 
@@ -25,7 +25,7 @@ test('modelFamily classifies the known families and falls back to other', () => 
 test('weeklyBucketForModel maps each family to the bucket that governs it', () => {
   assert.equal(weeklyBucketForModel(FABLE), 'unified7dFable');
   assert.equal(weeklyBucketForModel(SONNET), 'unified7dSonnet');
-  assert.equal(weeklyBucketForModel(OPUS), 'unified7d');       // shared weekly
+  assert.equal(weeklyBucketForModel(OPUS), 'unified7dOpus');
   assert.equal(weeklyBucketForModel('deepseek-x'), 'unified7d');
 });
 
@@ -52,6 +52,18 @@ test('a spent Sonnet weekly bucket bars only Sonnet — Opus/Fable unaffected', 
 
   assert.equal(am._isAvailable(am.accounts[0], SONNET), false);
   assert.equal(am._isAvailable(am.accounts[0], OPUS), true);
+  assert.equal(am._isAvailable(am.accounts[0], FABLE), true);
+});
+
+test('a spent Opus weekly bucket bars only Opus — Sonnet/Fable unaffected', () => {
+  const am = new AccountManager([oauth('a')], 0.98);
+  const q = am.accounts[0].quota;
+  q.unified5h = 0.1;
+  q.unified7d = 0.2;
+  q.unified7dOpus = 1.0;      // Opus weekly spent
+
+  assert.equal(am._isAvailable(am.accounts[0], OPUS), false);
+  assert.equal(am._isAvailable(am.accounts[0], SONNET), true);
   assert.equal(am._isAvailable(am.accounts[0], FABLE), true);
 });
 
@@ -90,12 +102,12 @@ test('selection spends the account whose GOVERNING weekly resets soonest', () =>
   const am = new AccountManager([oauth('a'), oauth('b')], 0.98);
   const a = am.accounts[0].quota, b = am.accounts[1].quota;
   const soon = Date.now() + 60_000, later = Date.now() + 600_000; // future so they aren't cleared as expired
-  // a: general weekly resets soonest; b: Fable weekly resets soonest.
-  a.unified7d = 0.3; a.unified7dReset = soon;  a.unified7dFable = 0.3; a.unified7dFableReset = later;
-  b.unified7d = 0.3; b.unified7dReset = later; b.unified7dFable = 0.3; b.unified7dFableReset = soon;
+  // a: Fable weekly resets soonest; b: Opus weekly resets soonest.
+  a.unified7dOpus = 0.3; a.unified7dOpusReset = later; a.unified7dFable = 0.3; a.unified7dFableReset = soon;
+  b.unified7dOpus = 0.3; b.unified7dOpusReset = soon;  b.unified7dFable = 0.3; b.unified7dFableReset = later;
 
-  assert.equal(am._pickBestAvailable(null, OPUS).name, 'a', 'Opus spends soonest general weekly');
-  assert.equal(am._pickBestAvailable(null, FABLE).name, 'b', 'Fable spends soonest Fable weekly');
+  assert.equal(am._pickBestAvailable(null, OPUS).name, 'b', 'Opus spends soonest Opus weekly');
+  assert.equal(am._pickBestAvailable(null, FABLE).name, 'a', 'Fable spends soonest Fable weekly');
 });
 
 // ── streaming model peek (shown immediately) ──────────────────

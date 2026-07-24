@@ -36,6 +36,19 @@ test('429 classification requires account-quota evidence', () => {
   })), 'account');
 });
 
+test('Opus status headers resolve to the Opus weekly bucket', () => {
+  const am = new AccountManager([{ name: 'a', type: 'oauth', accessToken: 't' }], 0.98);
+  assert.equal(am.rateLimitBucketFor('claude-opus-5', {
+    'anthropic-ratelimit-unified-7d-opus-status': 'rejected',
+  }), 'unified7dOpus');
+  assert.equal(am.rateLimitBucketFor('claude-opus-5', {
+    'anthropic-ratelimit-unified-7d_opus-status': 'rejected',
+  }), 'unified7dOpus');
+  assert.equal(am.rateLimitBucketFor('claude-opus-5', {
+    'anthropic-ratelimit-unified-7d_oi-status': 'rejected',
+  }), null, 'the observed 7d_oi header remains Fable-only');
+});
+
 // Drive one request through the proxy against an upstream that always 429s with
 // the given Retry-After header, and report how the request terminated.
 async function runAgainstThrottlingUpstream(retryAfterHeader) {
