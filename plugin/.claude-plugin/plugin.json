@@ -1,0 +1,7 @@
+{
+  "name": "teamclaude",
+  "version": "1.0.0",
+  "description": "Discovery commands for a local TeamClaude proxy: list every routed model across the Claude account fleet and the CLIProxyAPI backends (Codex, Grok, Kimi, Gemini). Adds /models-tc, deliberately namespaced so it never shadows Claude Code's built-in /model.",
+  "keywords": ["teamclaude", "proxy", "models", "routing", "cliproxyapi"],
+  "license": "MIT"
+}
