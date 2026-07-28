@@ -26,6 +26,14 @@ options per question, and the full fleet is larger than that, so use two stages:
    trade-off. The harness always adds an "Other" choice, so mention in the
    question text that any other id from the report can be typed there.
 
+   **Reasoning depth is chosen by MODEL on the backends, not by effort.** On
+   Claude, `output_config.effort` (low/medium/high/xhigh/max, default high) is a
+   real dial. On the CLIProxyAPI backends it showed no measurable effect in
+   testing — so when the user wants deeper reasoning from a backend, steer them
+   to the reasoning variant itself: `kimi-k2-thinking` over `kimi-k3`,
+   `grok-4.20-0309-reasoning` over `-non-reasoning`. Say this only when it is
+   relevant to what they asked for; do not lecture.
+
 If the user's request already names a family or a use case, skip stage one and
 go straight to the matching models.
 
