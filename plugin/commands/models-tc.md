@@ -42,9 +42,11 @@ options per question, and the full fleet is larger than that, so use two stages:
    `description` noting what it suits (coding, reasoning, speed, images) and its
    trade-off where that matters.
 
-   Some families also carry a dedicated reasoning variant — `kimi-k2-thinking`,
-   `grok-4.20-0309-reasoning`. Surface those on the first page when the user
-   wants depth; they stack with the effort level chosen in stage three.
+   Some families carry a dedicated reasoning variant — `kimi-k2-thinking` is the
+   one to surface first when the user wants depth from Kimi. For depth from Grok
+   prefer `grok-4.5`, which honors the effort level; `grok-4.20-0309-reasoning`
+   reasons deeply but ignores the level entirely (see the Grok table below), so
+   it is the wrong pick for someone who wants to control depth.
 
    The harness always appends "Other", so say in the question text that any id
    from the report can be typed there directly — that is the fast path out of
@@ -96,11 +98,19 @@ which is indistinguishable from effort having no effect.
 | **Codex / GPT** | `codex_claude_request.go` → `reasoning.effort` + `reasoning.summary:"auto"`. | `gpt-5.6-sol`, `low`→`max`: 2.46× output, 3.5× thinking. |
 | **Kimi** | `provider/kimi` → `thinking:{type:"enabled",effort:L}`, legacy top-level `reasoning_effort` deleted. | `kimi-k3` monotonic: `none` 0 → `low` 78 → `max` 2,716 thinking chars. Also `kimi-k2-thinking` 0→10,407 and `kimi-k2.7-code` 0→7,300. |
 
-**Grok / xAI** is not measured — the three above are. It takes the same
-`reasoning.effort` path as Codex, except `sanitizeXAIResponsesBody` **deletes**
-the field for any model with no thinking levels in the registry. So effort is a
-deliberate no-op on `grok-4.20-0309-non-reasoning`; steer to the `-reasoning`
-variant if the user wants depth from Grok.
+**Grok / xAI** takes the same `reasoning.effort` path as Codex, but
+`sanitizeXAIResponsesBody` **deletes** the field for any model with no thinking
+levels in the registry — and which Grok models qualify is not uniform:
+
+| Grok model | Effort | Measured |
+|---|---|---|
+| `grok-4.5` | **Works** | Monotonic `none` 318 → `low` 810 → `max` 1,361 thinking chars (resolves to `grok-4.5-build`). |
+| `grok-4.20-0309-reasoning` | **No effect** | `none` 2,083 vs `max` 1,791 at n=3 — max *lower*, and the direction flipped between runs. Variance, not signal. Reasons deeply at every level. |
+| `grok-4.20-0309-non-reasoning` | **Stripped** | 0 thinking chars at every level. No thinking capability at all. |
+
+So for effort to mean anything on Grok, use **`grok-4.5`**. On the `4.20` family
+the selector is inert either way — do not imply otherwise to the user. `grok-4.3`
+and the remaining Grok ids are untested.
 
 ### Level vocabulary is NOT uniform — this is the one real trap
 
