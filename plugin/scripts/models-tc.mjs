@@ -79,14 +79,18 @@ async function main() {
     return
   }
 
+  // Numbered within each family so a paginated picker can page by index rather
+  // than by recall — "next three" has to be mechanical, or entries get repeated.
   const order = [...FAMILIES.map((f) => f.label), 'Other']
   for (const family of order) {
     const entries = byFamily.get(family)
     if (!entries?.length) continue
-    console.log(`${family}`)
-    for (const { id, route } of entries.sort((a, b) => a.id.localeCompare(b.id))) {
-      console.log(`  ${id.padEnd(34)} route: ${route}`)
-    }
+    console.log(`${family}  (${entries.length} model${entries.length === 1 ? '' : 's'})`)
+    const sorted = entries.sort((a, b) => a.id.localeCompare(b.id))
+    sorted.forEach(({ id, route }, i) => {
+      const n = String(i + 1).padStart(2)
+      console.log(`  ${n}. ${id.padEnd(34)} route: ${route}`)
+    })
     console.log('')
   }
 

@@ -20,15 +20,35 @@ options per question, and the full fleet is larger than that, so use two stages:
    Grok / xAI, Kimi). In each option's `description`, say how many models the
    family has and what it is good for.
 
-2. **Stage two — model.** One question listing up to four models from the chosen
-   family, ordered strongest/most useful first. Give each a `description` noting
-   what it suits (coding, reasoning, speed, images) and, where it matters, its
-   trade-off. The harness always adds an "Other" choice, so mention in the
-   question text that any other id from the report can be typed there.
+   The report can carry five families (Gemini / Antigravity is the fifth), which
+   is one more than a question allows. If more than four appear, list three and
+   use the same `More families →` pager as stage two.
+
+2. **Stage two — model, paginated.** Families are larger than four, so page
+   through them instead of truncating:
+
+   - If the family has **four or fewer** models, list them all. No paging.
+   - Otherwise list **three** models, strongest/most useful first, and make the
+     **fourth option the pager**: label it `More models →`, description
+     `Show the next N of M in <family>`.
+   - If the user picks the pager, ask the same question again with the next three
+     in report order. Keep the pager as the fourth option while models remain.
+   - On the final page, list the remaining models (up to four) and drop the
+     pager. If they still have not chosen, offer `Back to the first page →`
+     rather than dead-ending.
+
+   Page in the report's order and never repeat a model across pages — the report
+   is sorted, so track position by index, not by memory. Give each option a
+   `description` noting what it suits (coding, reasoning, speed, images) and its
+   trade-off where that matters.
 
    Some families also carry a dedicated reasoning variant — `kimi-k2-thinking`,
-   `grok-4.20-0309-reasoning`. Mention those when the user wants depth; they
-   stack with the effort level chosen in stage three.
+   `grok-4.20-0309-reasoning`. Surface those on the first page when the user
+   wants depth; they stack with the effort level chosen in stage three.
+
+   The harness always appends "Other", so say in the question text that any id
+   from the report can be typed there directly — that is the fast path out of
+   paging for a user who already knows the id they want.
 
 3. **Stage three — reasoning effort.** Always ask this last, after the model is
    chosen. Options: **low**, **medium**, **high**, **max** (offer `xhigh` via
