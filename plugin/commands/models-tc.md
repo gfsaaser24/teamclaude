@@ -26,27 +26,60 @@ options per question, and the full fleet is larger than that, so use two stages:
    trade-off. The harness always adds an "Other" choice, so mention in the
    question text that any other id from the report can be typed there.
 
-   **Reasoning depth is chosen by MODEL on the backends, not by effort.** On
-   Claude, `output_config.effort` (low/medium/high/xhigh/max, default high) is a
-   real dial. On the CLIProxyAPI backends it showed no measurable effect in
-   testing — so when the user wants deeper reasoning from a backend, steer them
-   to the reasoning variant itself: `kimi-k2-thinking` over `kimi-k3`,
-   `grok-4.20-0309-reasoning` over `-non-reasoning`. Say this only when it is
-   relevant to what they asked for; do not lecture.
+   Some families also carry a dedicated reasoning variant — `kimi-k2-thinking`,
+   `grok-4.20-0309-reasoning`. Mention those when the user wants depth; they
+   stack with the effort level chosen in stage three.
+
+3. **Stage three — reasoning effort.** Always ask this last, after the model is
+   chosen. Options: **low**, **medium**, **high**, **max** (offer `xhigh` via
+   Other; the harness caps a question at four options). Describe them in terms of
+   the chosen model's job — low for scoped/latency-sensitive work, high as the
+   sane default, max when correctness outweighs cost and latency.
 
 If the user's request already names a family or a use case, skip stage one and
 go straight to the matching models.
 
+## The request shape effort must be sent in
+
+**`output_config.effort` is ignored unless `thinking.type` is `"adaptive"`.**
+Verified in CLIProxyAPI's `extractClaudeConfig`
+(`internal/thinking/apply.go`): it reads `output_config.effort` only inside the
+`adaptive`/`auto` branch. With no `thinking` field the value is silently
+discarded and the provider default applies — which looks exactly like "effort
+does nothing". Both fields are required, together:
+
+```json
+{
+  "model": "<id>",
+  "thinking": { "type": "adaptive" },
+  "output_config": { "effort": "low" | "medium" | "high" | "xhigh" | "max" }
+}
+```
+
+That one shape is correct for every routed model — it is native on Claude, and
+CLIProxyAPI translates it per provider:
+
+| Target | How the pair is consumed |
+|---|---|
+| **Claude** (fleet) | Native. `output_config.effort`, default `high`, all five levels on `claude-opus-5`. |
+| **Codex / GPT** | `codex_claude_request.go` maps it to OpenAI's `reasoning.effort`. Measured 2.46× output and 3.5× thinking between `low` and `max` on `gpt-5.6-sol`. |
+| **Kimi** | Routed through `ApplyThinking`, which clamps the level to what the model registry says the target supports. |
+| **Grok / xAI** | Same path, then `sanitizeXAIResponsesBody` **deletes** `reasoning.effort` for any model with no thinking levels registered — so it is a deliberate no-op on `grok-4.20-0309-non-reasoning`. Use the `-reasoning` variant for effort to apply. |
+
+Sending a bare top-level `effort` is wrong everywhere: Claude rejects it with
+"Extra inputs are not permitted", and the backends accept and ignore it.
+
 ## After they choose
 
-The session model cannot be changed programmatically, so do not claim to have
-switched it. Instead:
+The session model and effort cannot be changed programmatically, so do not claim
+to have switched anything. Give the user:
 
-- Give the exact command to use it now: `/model <id>`
-- Note that `claude --model <id>` starts a new session on it.
-- Offer — do not do it unsolicited — to make it the default for future sessions
-  by setting `"model"` in `~/.claude/settings.json`. Only edit that file if the
-  user agrees, and tell them it affects new sessions, not the current one.
+- `/model <id>` to switch model in this session, or `claude --model <id>` for a
+  new one.
+- For effort: `~/.claude/settings.json` carries `"effortLevel"`, which applies to
+  new sessions. Offer to set it — do not edit that file unsolicited.
+- If they are making raw API calls through the proxy, give them the JSON block
+  above with their chosen values filled in.
 
-Keep the final message short: the chosen id, the one command to run, and the
-offer. No recap of the whole table.
+Keep the final message short: chosen model, chosen effort, the command(s) to run.
+No recap of the whole table.
