@@ -51,22 +51,28 @@ options per question, and the full fleet is larger than that, so use two stages:
    paging for a user who already knows the id they want.
 
 3. **Stage three — reasoning effort.** Always ask this last, after the model is
-   chosen. Options: **low**, **medium**, **high**, **max** (offer `xhigh` via
-   Other; the harness caps a question at four options). Describe them in terms of
-   the chosen model's job — low for scoped/latency-sensitive work, high as the
-   sane default, max when correctness outweighs cost and latency.
+   chosen, because the valid levels depend on which model they picked:
+
+   - For a **`claude-*`** model: `low`, `medium`, `high`, `max`.
+   - For a **backend** model (Kimi, Codex, Grok): `none`, `low`, `high`, `max` —
+     `none` is worth surfacing there, it disables reasoning entirely and is the
+     fastest option.
+
+   Never offer `none` or `minimal` for a Claude model; Anthropic returns a 400.
+   `xhigh` sits between `high` and `max` on every system and can be typed into
+   Other — a question caps at four options, so it does not get a slot.
+
+   Describe the levels in terms of the chosen model's job: low for scoped or
+   latency-sensitive work, high as the sane default, max when correctness
+   outweighs cost and latency. Effort is not free — on `gpt-5.6-sol` `max` cost
+   2.4× the latency of `low`, and on `kimi-k3` roughly 2×.
 
 If the user's request already names a family or a use case, skip stage one and
 go straight to the matching models.
 
 ## The request shape effort must be sent in
 
-**`output_config.effort` is ignored unless `thinking.type` is `"adaptive"`.**
-Verified in CLIProxyAPI's `extractClaudeConfig`
-(`internal/thinking/apply.go`): it reads `output_config.effort` only inside the
-`adaptive`/`auto` branch. With no `thinking` field the value is silently
-discarded and the provider default applies — which looks exactly like "effort
-does nothing". Both fields are required, together:
+One shape is correct for every routed model. Send **both** fields together:
 
 ```json
 {
@@ -76,18 +82,46 @@ does nothing". Both fields are required, together:
 }
 ```
 
-That one shape is correct for every routed model — it is native on Claude, and
-CLIProxyAPI translates it per provider:
+`thinking` is not optional decoration — **`output_config.effort` is ignored
+without it.** CLIProxyAPI's `extractClaudeConfig` (`internal/thinking/apply.go`)
+reads effort only inside the `thinking.type == "adaptive"|"auto"` branch; with no
+`thinking` field the value is silently dropped and the provider default applies,
+which is indistinguishable from effort having no effect.
 
-| Target | How the pair is consumed |
-|---|---|
-| **Claude** (fleet) | Native. `output_config.effort`, default `high`, all five levels on `claude-opus-5`. |
-| **Codex / GPT** | `codex_claude_request.go` maps it to OpenAI's `reasoning.effort`. Measured 2.46× output and 3.5× thinking between `low` and `max` on `gpt-5.6-sol`. |
-| **Kimi** | Routed through `ApplyThinking`, which clamps the level to what the model registry says the target supports. |
-| **Grok / xAI** | Same path, then `sanitizeXAIResponsesBody` **deletes** `reasoning.effort` for any model with no thinking levels registered — so it is a deliberate no-op on `grok-4.20-0309-non-reasoning`. Use the `-reasoning` variant for effort to apply. |
+### What each system receives, and the evidence it lands
 
-Sending a bare top-level `effort` is wrong everywhere: Claude rejects it with
-"Extra inputs are not permitted", and the backends accept and ignore it.
+| Target | Translation | Verified end-to-end |
+|---|---|---|
+| **Claude** (fleet) | None — goes direct to Anthropic, bypassing CPA. Native field, default `high`. | Rejects out-of-range levels with a 400, so the field is unambiguously read. |
+| **Codex / GPT** | `codex_claude_request.go` → `reasoning.effort` + `reasoning.summary:"auto"`. | `gpt-5.6-sol`, `low`→`max`: 2.46× output, 3.5× thinking. |
+| **Kimi** | `provider/kimi` → `thinking:{type:"enabled",effort:L}`, legacy top-level `reasoning_effort` deleted. | `kimi-k3` monotonic: `none` 0 → `low` 78 → `max` 2,716 thinking chars. Also `kimi-k2-thinking` 0→10,407 and `kimi-k2.7-code` 0→7,300. |
+
+**Grok / xAI** is not measured — the three above are. It takes the same
+`reasoning.effort` path as Codex, except `sanitizeXAIResponsesBody` **deletes**
+the field for any model with no thinking levels in the registry. So effort is a
+deliberate no-op on `grok-4.20-0309-non-reasoning`; steer to the `-reasoning`
+variant if the user wants depth from Grok.
+
+### Level vocabulary is NOT uniform — this is the one real trap
+
+- **`low` `medium` `high` `xhigh` `max`** — safe everywhere. Use these by default.
+- **`none`** — backends only. Disables reasoning outright (measurably 0 thinking
+  chars, and the fastest option). **Anthropic rejects it with a 400**, so never
+  offer it for a `claude-*` model.
+- **`minimal`** — exists inside CPA (`ParseLevelSuffix`) but Anthropic also 400s
+  it. Do not offer it.
+
+Anthropic's exact error, worth recognizing:
+`output_config.effort: Input should be 'low', 'medium', 'high', 'xhigh' or 'max'`
+
+### Two shapes that look plausible and are wrong
+
+- **Bare top-level `effort`.** Claude answers "Extra inputs are not permitted";
+  the backends accept and ignore it.
+- **A level baked into the model id** — `kimi-k3(max)`. CPA does support this
+  (`ParseSuffix`/`ParseLevelSuffix`, and a suffix *outranks* the body), but
+  TeamClaude matches routes on the literal model id and returns
+  `not_found_error: model: kimi-k3(max)`. Never emit a suffixed id here.
 
 ## After they choose
 
