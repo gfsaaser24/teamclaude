@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import { loadOrCreateConfig, loadConfig, saveConfig, atomicConfigUpdate, getConfigPath, loadState, saveState } from './config.js';
 import { AccountManager, migrateCorruptRoutes } from './account-manager.js';
+import { invalidateClaudeIdentity } from './claude-identity.js';
 import { createProxyServer, SERVER_CAPABILITIES } from './server.js';
 import { importCredentials, loginOAuth, fetchProfile, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
 import { sameIdentity, orgKey, matchAccounts, accountStableId } from './identity.js';
@@ -336,7 +337,18 @@ async function serverCommand() {
       return { ok: false, active: accountManager.accounts[accountManager.currentIndex]?.name ?? null };
     }
     accountManager.selectActiveAccount();
-    return { ok: true, active: accountManager.accounts[accountManager.currentIndex]?.name ?? null };
+    const active = accountManager.accounts[accountManager.currentIndex] ?? null;
+    // Claude Code's /status prints a cached profile snapshot, not whoever the
+    // proxy is actually serving with — so after a re-pin it reports the previous
+    // account indefinitely. Drop the cache here (best-effort: a failure must
+    // never fail the pin) so the next launch refetches through the proxy.
+    const identity = invalidateClaudeIdentity({ accountUuid: active?.accountUuid ?? null });
+    if (identity.changed) {
+      console.log(`[TeamClaude] Cleared Claude Code's cached identity (${identity.previous ?? 'unknown'}) so /status refetches.`);
+    } else if (!identity.ok) {
+      console.log(`[TeamClaude] Could not clear Claude Code's cached identity (${identity.reason}); /status may show a stale account.`);
+    }
+    return { ok: true, active: active?.name ?? null };
   };
   hooks.handleEvents = (req, res) => hub.handleSSE(req, res);
   hooks.getRecentEvents = () => hub.recent();
