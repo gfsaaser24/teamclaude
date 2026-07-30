@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How TeamClaude, CLIProxyAPI and Orca are wired</title>
+<style>
+  /* minimal reset — the artifact host normally provides this */
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0}
+  img,svg{display:block;max-width:100%}
+  button{font:inherit;color:inherit}
+</style>
+</head>
+<body>
+<style>
+  /* Dark is the committed default — this is a monitoring instrument, not a document.
+     A viewer who explicitly stamps data-theme="light" still gets a real light set. */
+  :root {
+    --ground: #0d1417;
+    --surface: #151f24;
+    --surface-2: #1b282e;
+    --line: #24353d;
+    --line-bright: #35505b;
+    --ink: #cbdae0;
+    --ink-dim: #7d949d;
+    --ink-faint: #566a73;
+
+    --spine: #4fd1c5;   /* TeamClaude — the accent, the thing everything passes through */
+    --fleet: #d9895f;   /* Anthropic / Claude fleet */
+    --cpa: #7aa2f7;     /* CLIProxyAPI */
+    --vendor: #b58ac0;  /* third-party vendors */
+    --control: #8d9aa2; /* Orca control plane — deliberately desaturated, it is not traffic */
+    --inert: #6b7580;
+
+    --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+    --sans: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+    --r: 3px;
+    --step: clamp(0.75rem, 0.5rem + 0.6vw, 1rem);
+  }
+  :root[data-theme="light"] {
+    --ground: #f4f7f7;
+    --surface: #ffffff;
+    --surface-2: #eef3f4;
+    --line: #d3dee1;
+    --line-bright: #a7bcc3;
+    --ink: #17242a;
+    --ink-dim: #4e646d;
+    --ink-faint: #758b94;
+    --spine: #0f8f84;
+    --fleet: #a4552a;
+    --cpa: #3a63c4;
+    --vendor: #7d4f8c;
+    --control: #64737b;
+    --inert: #8b959e;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1rem, 3vw, 2rem) 5rem; }
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 600; letter-spacing: -0.015em; }
+  h1 { font-size: clamp(1.6rem, 1.1rem + 2.2vw, 2.5rem); line-height: 1.1; }
+  h2 { font-size: 1.0rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
+  h3 { font-size: 1.05rem; }
+  p { margin: 0; max-width: 68ch; }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  code { color: var(--spine); background: color-mix(in oklab, var(--spine) 9%, transparent); padding: 0.1em 0.34em; border-radius: var(--r); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header { border-bottom: 1px solid var(--line); padding-bottom: 1.75rem; margin-bottom: 2.5rem; }
+  .eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--spine); margin-bottom: 0.9rem; }
+  .lede { color: var(--ink-dim); margin-top: 1rem; font-size: 1.05rem; }
+
+  /* live facts strip */
+  .facts { display: flex; flex-wrap: wrap; gap: 0 2.25rem; margin-top: 1.6rem; padding-top: 1.3rem; border-top: 1px solid var(--line); }
+  .fact { display: flex; flex-direction: column; gap: 0.15rem; }
+  .fact dt { font-size: 0.68rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-faint); }
+  .fact dd { margin: 0; font-family: var(--mono); font-size: 0.95rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  section { margin-top: 3.25rem; }
+  .sec-head { display: flex; align-items: baseline; gap: 0.9rem; margin-bottom: 1.25rem; }
+  .sec-head .rule { flex: 1; height: 1px; background: var(--line); }
+
+  /* ── the one key idea ── */
+  .keyidea { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); }
+  .kcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 1.1rem 1.2rem; }
+  .kcard .tag { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; display: block; margin-bottom: 0.5rem; }
+  .kcard p { font-size: 0.9rem; color: var(--ink-dim); }
+  .kcard.data .tag { color: var(--spine); }
+  .kcard.ctrl .tag { color: var(--control); }
+  .kcard.data { border-left: 2px solid var(--spine); }
+  .kcard.ctrl { border-left: 2px solid var(--control); border-left-style: dashed; }
+
+  /* ── diagram ── */
+  .diagram-shell { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 1.5rem 1.25rem; overflow-x: auto; }
+  .diagram { position: relative; min-width: 900px; }
+  #edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+  .cols { position: relative; z-index: 1; display: grid; grid-template-columns: 1.05fr 1.15fr 0.95fr 1fr; gap: 1.5rem 2.4rem; align-items: start; }
+
+  .colhead { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); padding-bottom: 0.55rem; border-bottom: 1px dashed var(--line); margin-bottom: 0.9rem; }
+  .stack { display: flex; flex-direction: column; gap: 0.7rem; }
+
+  .node {
+    background: var(--surface-2);
+    border: 1px solid var(--line-bright);
+    border-radius: var(--r);
+    padding: 0.6rem 0.7rem;
+    transition: opacity .22s ease, border-color .22s ease, box-shadow .22s ease, transform .22s ease;
+  }
+  .node .nname { font-family: var(--mono); font-size: 0.8rem; color: var(--ink); display: block; }
+  .node .nmeta { font-size: 0.7rem; color: var(--ink-faint); display: block; margin-top: 0.18rem; line-height: 1.4; }
+  .node[data-hue="spine"]  { border-color: color-mix(in oklab, var(--spine) 45%, var(--line-bright)); }
+  .node[data-hue="fleet"]  { border-color: color-mix(in oklab, var(--fleet) 45%, var(--line-bright)); }
+  .node[data-hue="cpa"]    { border-color: color-mix(in oklab, var(--cpa) 45%, var(--line-bright)); }
+  .node[data-hue="vendor"] { border-color: color-mix(in oklab, var(--vendor) 40%, var(--line-bright)); }
+  .node[data-hue="ctrl"]   { border-style: dashed; border-color: color-mix(in oklab, var(--control) 40%, var(--line)); background: transparent; }
+
+  .node.spine-major { padding: 0.85rem 0.8rem; background: color-mix(in oklab, var(--spine) 7%, var(--surface-2)); }
+  .node.spine-major .nname { font-size: 0.92rem; color: var(--spine); }
+
+  /* highlight state driven by flow selection */
+  .diagram.filtering .node { opacity: 0.22; }
+  .diagram.filtering .node.lit { opacity: 1; box-shadow: 0 0 0 1px currentColor, 0 6px 22px -12px #000; transform: translateY(-1px); }
+  .diagram.filtering .node.lit[data-hue="spine"]  { color: var(--spine); }
+  .diagram.filtering .node.lit[data-hue="fleet"]  { color: var(--fleet); }
+  .diagram.filtering .node.lit[data-hue="cpa"]    { color: var(--cpa); }
+  .diagram.filtering .node.lit[data-hue="vendor"] { color: var(--vendor); }
+  .diagram.filtering .node.lit[data-hue="ctrl"]   { color: var(--control); }
+  .diagram.filtering .colhead { opacity: 0.35; }
+
+  .seq { position: absolute; z-index: 2; font-family: var(--mono); font-size: 0.64rem; font-weight: 700;
+         width: 1.15rem; height: 1.15rem; border-radius: 50%; display: grid; place-items: center;
+         background: var(--spine); color: var(--ground); transform: translate(-50%, -50%); pointer-events: none; }
+
+  /* ── flows ── */
+  .flows { display: grid; grid-template-columns: minmax(230px, 0.85fr) 1.6fr; gap: 1.5rem; align-items: start; }
+  @media (max-width: 760px) { .flows { grid-template-columns: 1fr; } }
+  .flowlist { display: flex; flex-direction: column; gap: 0.4rem; }
+  .flowbtn {
+    font-family: inherit; font-size: 0.86rem; text-align: left; cursor: pointer;
+    background: var(--surface); color: var(--ink-dim);
+    border: 1px solid var(--line); border-left: 2px solid var(--line-bright);
+    border-radius: var(--r); padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.15rem;
+    transition: color .18s ease, border-color .18s ease, background .18s ease;
+  }
+  .flowbtn:hover { color: var(--ink); border-left-color: var(--spine); }
+  .flowbtn:focus-visible { outline: 2px solid var(--spine); outline-offset: 2px; }
+  .flowbtn[aria-pressed="true"] { color: var(--ink); background: var(--surface-2); border-left-color: var(--spine); }
+  .flowbtn .fname { font-weight: 600; }
+  .flowbtn .fkind { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+  .flowbtn[data-kind="proposed"] { border-left-style: dashed; }
+  .flowbtn[data-kind="proposed"] .fkind { color: var(--vendor); }
+
+  .steps { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 1.25rem 1.35rem; min-height: 260px; }
+  .steps > .shead { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+  .steps .sdesc { color: var(--ink-dim); font-size: 0.9rem; margin-bottom: 1.1rem; }
+  .badge { font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.12em; text-transform: uppercase; padding: 0.2rem 0.45rem; border-radius: var(--r); border: 1px solid currentColor; white-space: nowrap; }
+  .badge.built { color: var(--spine); }
+  .badge.proposed { color: var(--vendor); border-style: dashed; }
+  ol.steplist { list-style: none; margin: 0; padding: 0; counter-reset: s; display: flex; flex-direction: column; }
+  ol.steplist li { counter-increment: s; display: grid; grid-template-columns: 1.5rem 1fr; gap: 0.85rem; padding: 0.6rem 0; border-top: 1px solid var(--line); }
+  ol.steplist li:first-child { border-top: 0; }
+  ol.steplist li::before {
+    content: counter(s); font-family: var(--mono); font-size: 0.7rem; font-weight: 700;
+    color: var(--spine); background: color-mix(in oklab, var(--spine) 12%, transparent);
+    width: 1.5rem; height: 1.5rem; border-radius: 50%; display: grid; place-items: center; margin-top: 0.1rem;
+  }
+  ol.steplist .swhat { font-size: 0.9rem; }
+  ol.steplist .swhere { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-faint); display: block; margin-top: 0.2rem; }
+  .empty { color: var(--ink-faint); font-size: 0.9rem; font-style: italic; }
+
+  /* legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; margin-top: 1rem; font-size: 0.74rem; color: var(--ink-faint); }
+  .legend span { display: inline-flex; align-items: center; gap: 0.4rem; font-family: var(--mono); }
+  .swatch { width: 0.65rem; height: 0.65rem; border-radius: 2px; }
+  .lkey { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .lkey svg { display: block; }
+
+  /* shapes table */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.11em; text-transform: uppercase; color: var(--ink-faint); background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td .mono { color: var(--ink); }
+  td em { color: var(--ink-faint); font-style: normal; font-size: 0.8rem; }
+
+  .callout { border: 1px solid var(--line); border-left: 2px solid var(--vendor); border-radius: var(--r); background: var(--surface); padding: 1.1rem 1.25rem; display: flex; flex-direction: column; gap: 0.7rem; }
+  .callout h3 { font-size: 0.95rem; }
+  .callout p { font-size: 0.9rem; color: var(--ink-dim); }
+  .callout ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; color: var(--ink-dim); display: flex; flex-direction: column; gap: 0.45rem; }
+  .callout li strong { color: var(--ink); font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Local request topology</div>
+    <h1>Where a request actually goes</h1>
+    <p class="lede">Three processes on loopback, one of which is not in the request path at all. That last part is the
+      thing that makes this confusing, so the map separates traffic from supervision.</p>
+    <dl class="facts">
+      <div class="fact"><dt>TeamClaude proxy</dt><dd>127.0.0.1:3456</dd></div>
+      <div class="fact"><dt>CLIProxyAPI</dt><dd>127.0.0.1:8319</dd></div>
+      <div class="fact"><dt>OAuth capture</dt><dd>127.0.0.1:1455</dd></div>
+      <div class="fact"><dt>Claude accounts</dt><dd>3 oauth</dd></div>
+      <div class="fact"><dt>Backend models</dt><dd>30 ids</dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <div class="sec-head"><h2>Read this first</h2><span class="rule"></span></div>
+    <div class="keyidea">
+      <div class="kcard data">
+        <span class="tag">Data path — solid lines</span>
+        <p>Every model request enters TeamClaude on <code>:3456</code>. TeamClaude picks an account, then egresses
+          <em>either</em> straight to Anthropic <em>or</em> into CLIProxyAPI. Those two are exclusive.</p>
+      </div>
+      <div class="kcard data">
+        <span class="tag">The trick</span>
+        <p>CLIProxyAPI is registered inside TeamClaude as just another <em>account</em> — one whose upstream is a
+          loopback port instead of <code>api.anthropic.com</code>. That is the whole bridge.</p>
+      </div>
+      <div class="kcard ctrl">
+        <span class="tag">Control plane — dashed lines</span>
+        <p>Orca carries no traffic. It writes config, spawns and supervises the CLIProxyAPI process, registers the
+          bridge account, and syncs the model list. Requests never pass through it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>The map</h2><span class="rule"></span></div>
+    <div class="diagram-shell">
+      <div class="diagram" id="diagram">
+        <svg id="edges" aria-hidden="true"></svg>
+        <div class="cols">
+
+          <div>
+            <div class="colhead">Callers</div>
+            <div class="stack">
+              <div class="node" data-node="cli" data-hue="spine">
+                <span class="nname">claude</span>
+                <span class="nmeta">PATH shim in ~/.teamclaude/bin wins over the real install</span>
+              </div>
+              <div class="node" data-node="pane" data-hue="spine">
+                <span class="nname">Orca terminal pane</span>
+                <span class="nmeta">spawns the CLI with ANTHROPIC_BASE_URL injected</span>
+              </div>
+              <div class="node" data-node="raw" data-hue="spine">
+                <span class="nname">POST /v1/messages</span>
+                <span class="nmeta">any client, scripts and probes included</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="colhead">TeamClaude · :3456</div>
+            <div class="stack">
+              <div class="node spine-major" data-node="tc" data-hue="spine">
+                <span class="nname">proxy server</span>
+                <span class="nmeta">GET is open; mutations need x-api-key</span>
+              </div>
+              <div class="node" data-node="routes" data-hue="spine">
+                <span class="nname">route table</span>
+                <span class="nmeta">exclusive match on model id — an unrouted id falls open to any eligible account</span>
+              </div>
+              <div class="node" data-node="mgr" data-hue="spine">
+                <span class="nname">account manager</span>
+                <span class="nmeta">quota windows, circuit breaker, rotation</span>
+              </div>
+              <div class="node" data-node="rewrite" data-hue="spine">
+                <span class="nname">rewriteModel()</span>
+                <span class="nmeta">per-account modelMap rewrites body.model on egress</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="colhead">Accounts</div>
+            <div class="stack">
+              <div class="node" data-node="fleet" data-hue="fleet">
+                <span class="nname">3 × oauth</span>
+                <span class="nmeta">route claude-fable-5 · upstream defaults to Anthropic</span>
+              </div>
+              <div class="node" data-node="bridge" data-hue="cpa">
+                <span class="nname">"cliproxy" · apikey</span>
+                <span class="nmeta">route cliproxy-backends · owns 30 model ids · upstream 127.0.0.1:8319</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="colhead">Egress</div>
+            <div class="stack">
+              <div class="node" data-node="anthropic" data-hue="fleet">
+                <span class="nname">api.anthropic.com</span>
+                <span class="nmeta">Claude models go here directly and never touch CLIProxyAPI</span>
+              </div>
+              <div class="node" data-node="cpa" data-hue="cpa">
+                <span class="nname">CLIProxyAPI · :8319</span>
+                <span class="nmeta">translates the Claude wire format per provider</span>
+              </div>
+              <div class="node" data-node="vendors" data-hue="vendor">
+                <span class="nname">OpenAI · Moonshot · xAI</span>
+                <span class="nmeta">reached with that provider's own auth</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="cols" style="margin-top:1.6rem">
+          <div style="grid-column: 1 / -1">
+            <div class="colhead">Orca control plane — supervises, carries nothing</div>
+            <div class="stack" style="flex-direction:row; flex-wrap:wrap; gap:0.7rem">
+              <div class="node" data-node="owner" data-hue="ctrl" style="flex:1 1 190px">
+                <span class="nname">config-owner</span>
+                <span class="nmeta">writes CPA's config, self-heals drift while stopped</span>
+              </div>
+              <div class="node" data-node="sup" data-hue="ctrl" style="flex:1 1 190px">
+                <span class="nname">service supervisor</span>
+                <span class="nmeta">spawns and restarts the CPA binary</span>
+              </div>
+              <div class="node" data-node="prov" data-hue="ctrl" style="flex:1 1 190px">
+                <span class="nname">provisioning</span>
+                <span class="nmeta">registers the bridge account in TeamClaude</span>
+              </div>
+              <div class="node" data-node="sync" data-hue="ctrl" style="flex:1 1 190px">
+                <span class="nname">models-sync</span>
+                <span class="nmeta">pushes CPA's model list into the route</span>
+              </div>
+              <div class="node" data-node="oauth" data-hue="ctrl" style="flex:1 1 190px">
+                <span class="nname">oauth callback · :1455</span>
+                <span class="nmeta">loopback-only listener, forwards the code to CPA</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--spine)"></i>TeamClaude</span>
+      <span><i class="swatch" style="background:var(--fleet)"></i>Anthropic</span>
+      <span><i class="swatch" style="background:var(--cpa)"></i>CLIProxyAPI</span>
+      <span><i class="swatch" style="background:var(--vendor)"></i>vendor</span>
+      <span class="lkey"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--ink-faint)" stroke-width="1.5"/></svg>request</span>
+      <span class="lkey"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--control)" stroke-width="1.5" stroke-dasharray="3 3"/></svg>control</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Flows</h2><span class="rule"></span></div>
+    <div class="flows">
+      <div class="flowlist" id="flowlist" role="group" aria-label="Select a flow to trace"></div>
+      <div class="steps" id="steps">
+        <p class="empty">Pick a flow to light up its path on the map.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>One inbound shape, three wire formats</h2><span class="rule"></span></div>
+    <p style="margin-bottom:1.1rem;color:var(--ink-dim);font-size:0.92rem">
+      You send the same pair every time — <code>thinking:{type:"adaptive"}</code> plus
+      <code>output_config:{effort}</code>. Drop the <code>thinking</code> half and CLIProxyAPI discards the effort
+      silently, which looks exactly like effort doing nothing.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Target</th><th>What the provider receives</th><th>Verified</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="mono">claude-*</span><br><em>bypasses CPA</em></td>
+            <td><span class="mono">output_config.effort</span> — passed through untouched</td>
+            <td>Rejects out-of-range levels with a 400, so the field is provably read</td>
+          </tr>
+          <tr>
+            <td><span class="mono">gpt-* / codex-*</span></td>
+            <td><span class="mono">reasoning.effort</span> + <span class="mono">reasoning.summary:"auto"</span></td>
+            <td><span class="num">2.46×</span> output, low → max on gpt-5.6-sol</td>
+          </tr>
+          <tr>
+            <td><span class="mono">kimi-*</span></td>
+            <td><span class="mono">thinking:{type:"enabled",effort}</span>, legacy <span class="mono">reasoning_effort</span> deleted</td>
+            <td>kimi-k3 monotonic: <span class="num">0 → 78 → 2,716</span> thinking chars</td>
+          </tr>
+          <tr>
+            <td><span class="mono">grok-*</span></td>
+            <td><span class="mono">reasoning.effort</span>, deleted for models with no registered thinking levels</td>
+            <td>Works on grok-4.5 only — the 4.20 family ignores it</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:0.9rem;font-size:0.85rem;color:var(--ink-faint)">
+      Levels are not uniform: <span class="mono">low medium high xhigh max</span> work everywhere,
+      <span class="mono">none</span> only on the backends — Anthropic returns a 400 for it.</p>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Hot-swap from the status bar</h2><span class="rule"></span></div>
+    <div class="callout">
+      <h3>Both halves already have a mechanism — neither is wired to the popup yet</h3>
+      <p>Nothing here needs Claude Code to cooperate, because Orca owns the terminal and TeamClaude owns the wire.</p>
+      <ul>
+        <li><strong>Model, in the running session.</strong> Orca already exposes a <span class="mono">pty:write</span>
+          channel into a live pane, so the popup can type <span class="mono">/model &lt;id&gt;</span> straight into the
+          session. The CLI's own header stays truthful because the CLI really did switch.</li>
+        <li><strong>Model, without touching the session at all.</strong> TeamClaude already ships
+          <span class="mono">rewriteModel(body, modelMap)</span> and rewrites <span class="mono">body.model</span>
+          per account on egress. A popup-set override would retarget the next request — though the CLI would keep
+          displaying the old name, which is why the pty route is the honest one for a visible swap.</li>
+        <li><strong>Effort.</strong> No session interaction is possible or needed — the CLI has no command for it.
+          TeamClaude is the only place that can inject the
+          <span class="mono">thinking</span>/<span class="mono">output_config</span> pair into every outgoing request,
+          which is also the only way to set it mid-session rather than at launch.</li>
+      </ul>
+      <p style="color:var(--ink-faint);font-size:0.85rem">The gap is a small write path on the TeamClaude side plus the
+        popup UI. The routing underneath already does the hard part.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var FLOWS = [
+    {
+      id: 'claude', name: 'A Claude model request', kind: 'built',
+      desc: 'claude-opus-5 through the fleet. Note where it does not go: CLIProxyAPI is never involved.',
+      edges: [['cli','tc'],['tc','routes'],['routes','fleet'],['fleet','anthropic']],
+      steps: [
+        ['Bare <code>claude</code> resolves to the PATH shim, which re-execs the real CLI with the proxy as its base URL.', 'shim.js · TEAMCLAUDE_RUN_GUARD blocks recursion'],
+        ['Request lands on the proxy. A GET needs no auth; this is a POST through the relay.', '127.0.0.1:3456 /v1/messages'],
+        ['The route table matches <code>claude-opus-5</code> against the <code>claude-fable-5</code> route.', 'match is exclusive — first hit owns the id'],
+        ['That route pins three oauth accounts. The manager picks one on quota and breaker state.', 'account-manager.js'],
+        ['The account carries no custom upstream, so it egresses to the default.', 'https://api.anthropic.com']
+      ]
+    },
+    {
+      id: 'backend', name: 'A backend model request', kind: 'built',
+      desc: 'kimi-k3 crossing the bridge. Same entry point, different account, one extra hop.',
+      edges: [['cli','tc'],['tc','routes'],['routes','bridge'],['bridge','cpa'],['cpa','vendors']],
+      steps: [
+        ['Identical entry — the caller cannot tell the two paths apart.', '127.0.0.1:3456 /v1/messages'],
+        ['<code>kimi-k3</code> matches the <code>cliproxy-backends</code> route, which owns 30 ids.', 'route → account name:cliproxy'],
+        ['That account is an apikey account whose upstream is a loopback port, not Anthropic. This is the bridge.', 'upstream 127.0.0.1:8319 — forced loopback-only'],
+        ['CLIProxyAPI translates the Claude-shaped body into Moonshot\'s format.', 'internal/thinking/provider/kimi'],
+        ['It calls Moonshot with its own stored credential and streams the reply back up the chain.', 'reasoning_content maps back to thinking blocks']
+      ]
+    },
+    {
+      id: 'effort', name: 'How effort is translated', kind: 'built',
+      desc: 'One inbound pair becomes a different field name per provider — the reason a wrong shape looks like a no-op.',
+      edges: [['raw','tc'],['tc','routes'],['routes','bridge'],['bridge','cpa'],['cpa','vendors']],
+      steps: [
+        ['You send <code>thinking:{type:"adaptive"}</code> and <code>output_config:{effort}</code> together.', 'both fields are load-bearing'],
+        ['TeamClaude routes on the model id and does not read or alter the effort fields.', 'it is a router, not a translator'],
+        ['CLIProxyAPI reads effort <em>only</em> inside the adaptive/auto branch. No thinking field, no effort.', 'extractClaudeConfig'],
+        ['It emits the target\'s own field: reasoning.effort for Codex and Grok, thinking.effort for Kimi.', 'one inbound shape, three wire formats'],
+        ['Unsupported levels are dropped rather than errored — which is why a silent no-op is the failure mode.', 'sanitizeXAIResponsesBody deletes it outright']
+      ]
+    },
+    {
+      id: 'boot', name: 'Orca brings the stack up', kind: 'built',
+      desc: 'The control plane. Dashed on the map because not one of these steps carries a model request.',
+      edges: [['owner','cpa'],['sup','cpa'],['prov','tc'],['sync','routes']],
+      steps: [
+        ['config-owner writes CPA\'s config file, rewriting it when it has drifted and the service is stopped.', 'atomic write · bcrypt secret convergence'],
+        ['The supervisor spawns the CPA binary and owns its restarts.', 'default port 8319'],
+        ['Provisioning registers the bridge account in TeamClaude, keyed on <code>id</code> — not <code>name</code>.', 'POST /teamclaude/account with x-api-key'],
+        ['models-sync pulls CPA\'s model list and writes those ids into the route\'s match list.', 'this is where the 30 ids come from'],
+        ['From here Orca is idle in the request path. Traffic flows without it.', 'kill Orca and routing still works']
+      ]
+    },
+    {
+      id: 'oauth', name: 'Signing in to a backend', kind: 'built',
+      desc: 'Why a second listener exists on :1455 instead of letting CLIProxyAPI handle its own callback.',
+      edges: [['oauth','cpa'],['owner','cpa']],
+      steps: [
+        ['You start a provider login from the Backends panel.', 'management API /v0/management'],
+        ['The vendor redirects the browser to <code>localhost:1455/auth/callback?code=…</code>.', 'fixed by the vendor, not configurable'],
+        ['CPA only opens that listener in web-UI mode, which also binds it to 0.0.0.0 — an exposure we declined.', 'so the port would sit dead'],
+        ['Orca runs its own listener bound strictly to 127.0.0.1 and captures the code.', 'oauth-callback-server.ts'],
+        ['It forwards the code to CPA\'s own callback endpoint, which completes the token exchange.', 'GET /v0/management/oauth-callback']
+      ]
+    },
+    {
+      id: 'swap', name: 'Hot-swap from the popup', kind: 'proposed',
+      desc: 'Not built. Both halves have a working mechanism already — this is what connecting them would look like.',
+      edges: [['pane','tc'],['tc','rewrite'],['rewrite','bridge']],
+      steps: [
+        ['Pick provider, model and effort in the status-bar popup.', 'UI does not exist yet'],
+        ['For a visible model swap, Orca types <code>/model &lt;id&gt;</code> into the live pane over its existing channel.', 'pty:write → provider.write(ptyId, data)'],
+        ['Alternatively TeamClaude retargets on egress with no session interaction, at the cost of a stale name in the CLI header.', 'rewriteModel(body, modelMap) — already shipped'],
+        ['Effort has no CLI command at all, so TeamClaude must inject the pair into outgoing requests itself.', 'the only way to change it mid-session'],
+        ['What is missing is a small write path plus the popup. The routing underneath is done.', 'no CLI cooperation required']
+      ]
+    }
+  ];
+
+  var diagram = document.getElementById('diagram');
+  var svg = document.getElementById('edges');
+  var list = document.getElementById('flowlist');
+  var panel = document.getElementById('steps');
+  var active = null;
+
+  function nodeEl(id) { return diagram.querySelector('[data-node="' + id + '"]'); }
+
+  // Structural edges that are always present, drawn faintly.
+  var BASE = [
+    ['cli','tc'], ['pane','tc'], ['raw','tc'],
+    ['tc','routes'], ['routes','mgr'], ['mgr','rewrite'],
+    ['routes','fleet'], ['routes','bridge'],
+    ['fleet','anthropic'], ['bridge','cpa'], ['cpa','vendors']
+  ];
+  var CONTROL = [['owner','cpa'], ['sup','cpa'], ['prov','tc'], ['sync','routes'], ['oauth','cpa']];
+
+  function ns(t, a) {
+    var e = document.createElementNS('http://www.w3.org/2000/svg', t);
+    for (var k in a) e.setAttribute(k, a[k]);
+    return e;
+  }
+
+  function draw() {
+    var box = diagram.getBoundingClientRect();
+    svg.setAttribute('viewBox', '0 0 ' + box.width + ' ' + box.height);
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    document.querySelectorAll('.seq').forEach(function (n) { n.remove(); });
+
+    var lit = active ? active.edges.map(function (p) { return p[0] + '>' + p[1]; }) : [];
+
+    function path(from, to, dashed, isLit, order) {
+      var a = nodeEl(from), b = nodeEl(to);
+      if (!a || !b) return;
+      var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      var x1 = ra.right - box.left, y1 = ra.top - box.top + ra.height / 2;
+      var x2 = rb.left - box.left, y2 = rb.top - box.top + rb.height / 2;
+      // Route around when the target sits left of / level with the source (control plane rises upward).
+      if (x2 < x1) {
+        x1 = ra.left - box.left + ra.width / 2; y1 = ra.top - box.top;
+        x2 = rb.left - box.left + rb.width / 2; y2 = rb.bottom - box.top;
+      }
+      var dx = Math.max(24, Math.abs(x2 - x1) * 0.45);
+      var d = 'M' + x1 + ',' + y1 + ' C' + (x1 + dx) + ',' + y1 + ' ' + (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2;
+      var stroke = dashed ? 'var(--control)' : 'var(--line-bright)';
+      var w = 1.25, op = 1;
+      if (active) {
+        if (isLit) { stroke = dashed ? 'var(--control)' : 'var(--spine)'; w = 2; }
+        else { op = 0.13; }
+      }
+      var el = ns('path', { d: d, fill: 'none', stroke: stroke, 'stroke-width': w, opacity: op });
+      if (dashed) el.setAttribute('stroke-dasharray', '4 4');
+      svg.appendChild(el);
+
+      if (isLit && order) {
+        var mid = document.createElement('div');
+        mid.className = 'seq';
+        mid.textContent = order;
+        mid.style.left = ((x1 + x2) / 2) + 'px';
+        mid.style.top = ((y1 + y2) / 2) + 'px';
+        diagram.appendChild(mid);
+      }
+    }
+
+    BASE.forEach(function (p) {
+      var key = p[0] + '>' + p[1];
+      var i = lit.indexOf(key);
+      path(p[0], p[1], false, i > -1, i > -1 ? i + 1 : 0);
+    });
+    CONTROL.forEach(function (p) {
+      var key = p[0] + '>' + p[1];
+      var i = lit.indexOf(key);
+      path(p[0], p[1], true, i > -1, i > -1 ? i + 1 : 0);
+    });
+    // Flow edges that are not part of the structural sets (e.g. the proposed swap).
+    lit.forEach(function (key, i) {
+      var known = BASE.concat(CONTROL).some(function (p) { return p[0] + '>' + p[1] === key; });
+      if (!known) { var s = key.split('>'); path(s[0], s[1], active.kind === 'proposed', true, i + 1); }
+    });
+  }
+
+  function render() {
+    diagram.classList.toggle('filtering', !!active);
+    diagram.querySelectorAll('.node').forEach(function (n) { n.classList.remove('lit'); });
+    if (active) {
+      var ids = {};
+      active.edges.forEach(function (p) { ids[p[0]] = 1; ids[p[1]] = 1; });
+      Object.keys(ids).forEach(function (id) { var n = nodeEl(id); if (n) n.classList.add('lit'); });
+    }
+
+    Array.prototype.forEach.call(list.children, function (b) {
+      b.setAttribute('aria-pressed', String(!!active && b.dataset.flow === active.id));
+    });
+
+    if (!active) {
+      panel.innerHTML = '<p class="empty">Pick a flow to light up its path on the map.</p>';
+    } else {
+      var h = '<div class="shead"><h3>' + active.name + '</h3><span class="badge ' + active.kind + '">' +
+        (active.kind === 'proposed' ? 'not built' : 'in place') + '</span></div>' +
+        '<p class="sdesc">' + active.desc + '</p><ol class="steplist">';
+      active.steps.forEach(function (s) {
+        h += '<li><div><span class="swhat">' + s[0] + '</span><span class="swhere">' + s[1] + '</span></div></li>';
+      });
+      panel.innerHTML = h + '</ol>';
+    }
+    draw();
+  }
+
+  FLOWS.forEach(function (f) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'flowbtn';
+    b.dataset.flow = f.id;
+    b.dataset.kind = f.kind;
+    b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = '<span class="fname">' + f.name + '</span><span class="fkind">' +
+      (f.kind === 'proposed' ? 'proposed' : 'built') + '</span>';
+    b.addEventListener('click', function () {
+      active = (active && active.id === f.id) ? null : f;
+      render();
+    });
+    list.appendChild(b);
+  });
+
+  var t;
+  window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(draw, 90); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+  render();
+})();
+</script>
+</body>
+</html>

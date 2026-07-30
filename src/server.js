@@ -148,7 +148,20 @@ export const SERVER_CAPABILITIES = Object.freeze([
   'status.identity',    // per-account stable id + email + per-bucket observedAt
   'events.durationMs',  // request-end events carry durationMs
   'log.bootId',         // /log + /status + SSE hello carry a per-process bootId
+  'effort.rw',          // GET/POST /teamclaude/effort (server-side effort override)
 ]);
+
+// The reasoning-effort levels a client may set on us. `minimal` is deliberately
+// absent: CLIProxyAPI understands it (ParseLevelSuffix) but Anthropic 400s it,
+// and a level we would refuse to inject on half the fleet is not worth accepting.
+const EFFORT_LEVELS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+// Levels Anthropic's own API rejects outright:
+//   output_config.effort: Input should be 'low', 'medium', 'high', 'xhigh' or 'max'
+// `claude-*` requests egress straight to api.anthropic.com and never pass through
+// CLIProxyAPI, so injecting either of these would turn a working request into a
+// 400. `minimal` is here too because a hand-edited config can still carry it.
+const ANTHROPIC_REJECTED_EFFORT_LEVELS = new Set(['none', 'minimal']);
 
 // Control endpoints that mutate disk/live state — the proxy-key is REQUIRED on
 // these even from loopback (item 5c). Reads and CONNECT keep the loopback
@@ -158,6 +171,7 @@ export function isMutationRequest(method, url) {
   const u = url || '';
   return u === '/teamclaude/routes'
     || u === '/teamclaude/account'
+    || u === '/teamclaude/effort'
     || u === '/teamclaude/certs/ensure'
     || u === '/teamclaude/reload'
     || u === '/teamclaude/oauth/login'
@@ -331,6 +345,41 @@ export function createProxyServer(accountManager, config, hooks = {}, sx = null)
           // legacy config write; a real "no such account" must surface as an error.
           if (!result) { sendJson(res, 400, { ok: false, error: 'unknown_account' }); return; }
           sendJson(res, 200, { ok: true, account: result });
+        } catch (err) {
+          sendJson(res, 500, { ok: false, error: err.message });
+        }
+        return;
+      }
+
+      // Reasoning-effort override. Claude Code has no CLI command to change
+      // effort mid-session, so the proxy is the only place it can be injected
+      // into a live session's requests (see injectEffort). GET is a read and
+      // keeps the loopback exemption like the other GETs; POST is a mutation and
+      // therefore requires the proxy key even from loopback (isMutationRequest).
+      if (req.method === 'GET' && req.url === '/teamclaude/effort') {
+        sendJson(res, 200, { effort: hooks.getEffort?.() ?? null });
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/teamclaude/effort') {
+        if (!hooks.setEffort) { sendJson(res, 501, { ok: false, error: 'effort control not supported' }); return; }
+        let payload;
+        try { payload = await readJsonBody(req); }
+        catch (err) {
+          if (err?.code === 'BODY_TOO_LARGE') { sendBodyTooLarge(req, res); return; }
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); return;
+        }
+        // An absent or null level clears the override — that is the only way back
+        // to "whatever the client asked for", so it must be expressible.
+        const level = payload?.level ?? null;
+        if (level !== null && (typeof level !== 'string' || !EFFORT_LEVELS.has(level))) {
+          sendJson(res, 400, { ok: false, error: 'invalid_level' });
+          return;
+        }
+        try {
+          // Disk + live apply both complete before the 200, same as routes and
+          // account: a persisted-but-not-live 200 would be a lie (item 5c).
+          const effort = await hooks.setEffort(level);
+          sendJson(res, 200, { ok: true, effort: effort ?? null });
         } catch (err) {
           sendJson(res, 500, { ok: false, error: err.message });
         }
@@ -814,6 +863,13 @@ export async function forwardRequest(req, res, body, accountManager, upstream, r
   // Align the body's account_uuid (in metadata.user_id) with the account whose
   // token we're injecting (same-length patch; no-op if absent).
   let sendBody = account.accountUuid ? patchAccountUuid(body, account.accountUuid) : body;
+  // Apply the server-side reasoning-effort override, if one is set. This must run
+  // BEFORE rewriteModel: the Anthropic guard inside injectEffort decides on the
+  // model the CLIENT asked for (ctx.model, the same id routing and quota
+  // accounting used), not on a modelMap rewrite of it — after the rewrite a
+  // `claude-*` request bound for a backend would no longer look like one.
+  const effortLevel = hooks.getEffort?.()?.level;
+  if (effortLevel) sendBody = injectEffort(sendBody, effortLevel, ctx.model);
   // Rewrite the model name for accounts that target a different upstream (e.g.
   // GLM), which uses different model identifiers than Anthropic.
   if (account.modelMap) sendBody = rewriteModel(sendBody, account.modelMap);
@@ -1190,6 +1246,56 @@ function extractUsageFromBody(buffer, accountIndex, accountManager) {
   } catch {
     // not JSON or no usage
   }
+}
+
+/**
+ * Inject the server-side reasoning-effort override into a JSON request body.
+ *
+ * Effort cannot be changed from inside a running Claude Code session, so the
+ * proxy is the only place a live session's depth can be steered. Injection is
+ * deliberately timid — it declines in four cases and returns the original buffer
+ * unchanged (same defensive contract as rewriteModel: a non-JSON body, or any
+ * body we're not sure about, passes through byte-for-byte).
+ *
+ * `model` is the id the client asked for (ctx.model), not a modelMap rewrite.
+ * Exported for tests.
+ */
+export function injectEffort(body, level, model) {
+  if (!level) return body;
+  try {
+    const obj = JSON.parse(body.toString('utf8'));
+    // Only a JSON object can carry the fields; an array/scalar body isn't a
+    // messages request and stringifying a mutated one would corrupt it.
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return body;
+
+    // 1. The client wins. An explicit output_config.effort is the caller's own
+    //    decision for this request; a background override must never overrule it.
+    const outputConfig = (obj.output_config && typeof obj.output_config === 'object'
+      && !Array.isArray(obj.output_config)) ? obj.output_config : null;
+    if (outputConfig?.effort != null) return body;
+
+    // 2. Respect an incompatible thinking block. CLIProxyAPI's
+    //    extractClaudeConfig (internal/thinking/apply.go) reads
+    //    output_config.effort ONLY inside the adaptive/auto branch — with
+    //    type:"enabled" it takes depth from budget_tokens instead. Injecting
+    //    there would overwrite the client's intent for nothing.
+    const thinkingType = obj.thinking?.type;
+    if (obj.thinking != null && thinkingType !== 'adaptive' && thinkingType !== 'auto') return body;
+
+    // 3. Anthropic guard. `claude-*` goes direct to api.anthropic.com and never
+    //    through CLIProxyAPI, and Anthropic rejects the backend-only levels with
+    //    400 invalid_request_error. These levels are legal on the backends, so
+    //    the override stays set — it just doesn't apply to this request.
+    if (/^claude-/i.test(model || '') && ANTHROPIC_REJECTED_EFFORT_LEVELS.has(level)) return body;
+
+    // 4. Both fields or neither. output_config.effort alone is silently dropped
+    //    downstream (see rule 2), so an absent thinking block gets the adaptive
+    //    type that makes effort readable. An existing adaptive/auto block stands.
+    obj.output_config = outputConfig ? { ...outputConfig, effort: level } : { effort: level };
+    if (obj.thinking == null) obj.thinking = { type: 'adaptive' };
+    return Buffer.from(JSON.stringify(obj), 'utf8');
+  } catch { /* not JSON — pass through unchanged */ }
+  return body;
 }
 
 // Rewrite the `model` field in a JSON request body using a per-account map.

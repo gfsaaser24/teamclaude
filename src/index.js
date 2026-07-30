@@ -241,6 +241,9 @@ async function serverCommand() {
     // Pick up route table edits (teamclaude route …, TUI editor, or a hand edit).
     config.routes = diskConfig.routes || [];
     accountManager.setRoutes(config.routes);
+    // Pick up a hand-edited (or externally written) reasoning-effort override,
+    // including its removal — a re-sync means disk is authoritative.
+    config.effort = diskConfig.effort || null;
     // Apply an sx.org key/mode change made on disk (e.g. via POST /teamclaude/reload).
     const diskSxKey = diskConfig.sx?.apiKey || null;
     const diskSxMode = diskConfig.sx?.mode || 'always';
@@ -416,6 +419,25 @@ async function serverCommand() {
       models: mgr.models,
       modelMap: mgr.modelMap,
     };
+  };
+
+  // Reasoning-effort override. Claude Code has no CLI command to change effort
+  // mid-session, so the desktop sets it here and the proxy injects it into every
+  // subsequent request of the live session (injectEffort in server.js). Read per
+  // request off the in-memory config, so a POST takes effect on the next request
+  // with no reload. Same write-order as setAccount: persist to disk FIRST, so a
+  // disk failure propagates as a 500 with nothing applied live, then mirror into
+  // the in-memory config copy.
+  hooks.getEffort = () => config.effort ?? null;
+  hooks.setEffort = async (level) => {
+    // null clears the override; absence — not `{level:null}` — is the encoding on
+    // disk, so a cleared override leaves no residue in a hand-edited config.
+    const effort = level ? { level } : null;
+    await atomicConfigUpdate(diskConfig => {
+      if (effort) diskConfig.effort = effort; else delete diskConfig.effort;
+    });
+    if (effort) config.effort = effort; else delete config.effort;
+    return effort;
   };
 
   // Browser OAuth login driven from the desktop UI. Runs the same loginOAuth
