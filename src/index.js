@@ -24,6 +24,11 @@ import { EventHub } from './events.js';
 const args = process.argv.slice(2);
 const command = args[0];
 
+// Flags the bare `teamclaude` form owns (i.e. `server`'s). Everything else that
+// starts with `-` is treated as a claude flag and passed through — see the
+// default branch below.
+const SERVER_FLAGS = new Set(['--headless', '--no-tui', '--log-to']);
+
 switch (command) {
   case 'server':
     await serverCommand();
@@ -97,8 +102,6 @@ switch (command) {
     process.exit(0);
     break;
   case 'version':
-  case '--version':
-  case '-V':
     console.log(currentVersion() || 'unknown');
     process.exit(0);
     break;
@@ -108,13 +111,32 @@ switch (command) {
     showHelp();
     break;
   default:
-    // No command or unknown command → start server
     if (command && !command.startsWith('-')) {
       console.error(`Unknown command: ${command}\n`);
       showHelp();
       process.exit(1);
     }
-    await serverCommand();
+    // Bare `teamclaude`, or `teamclaude` with one of the server's own flags,
+    // starts the proxy — the long-standing behaviour.
+    if (!command || args.every((a) => !a.startsWith('-') || SERVER_FLAGS.has(a.split('=')[0]))) {
+      await serverCommand();
+      break;
+    }
+    // Anything else that looks like a flag is a CLAUDE flag, so behave as a
+    // drop-in for `claude` and hand it straight through.
+    //
+    // Why: editors and launchers let you point them at a "claude binary", then
+    // probe it with `--version` and later invoke it with claude's own flags.
+    // Answering `--version` with OUR version made one such tool refuse to run
+    // ("Claude Code v1.2.0 is too old… upgrade to v2.1.111"), because 1.2.0 is
+    // this package's version, not Claude Code's. Worse, the old default started
+    // a SECOND proxy when handed `--dangerously-skip-permissions`. Passing
+    // through fixes both: the tool sees Claude Code's real version, and the
+    // launch is routed exactly as `teamclaude run --` would route it.
+    //
+    // `teamclaude version` still reports this package's version.
+    args.unshift('run', '--');
+    await runCommand();
     break;
 }
 
