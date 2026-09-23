@@ -11,7 +11,7 @@ import { createProxyServer, SERVER_CAPABILITIES } from './server.js';
 import { importCredentials, loginOAuth, fetchProfile, refreshAccessToken, isTokenExpiringSoon } from './oauth.js';
 import { sameIdentity, orgKey, matchAccounts, accountStableId } from './identity.js';
 import * as alias from './alias.js';
-import { shimCommand } from './shim.js';
+import { shimCommand, windowsSpawnSpec } from './shim.js';
 import { ensureCerts } from './mitm.js';
 import { Prober } from './prober.js';
 import { Warmer } from './warmer.js';
@@ -841,9 +841,14 @@ async function runCommand() {
   }
 
   // Use spawnSync so the Node process blocks entirely — behaves like execvp.
-  const result = spawnSync(execCmd, claudeArgs, {
+  // On Windows, resolve the launcher ourselves so argv with spaces/quotes
+  // (prompts, SDK JSON flags) reaches it intact — see windowsSpawnSpec.
+  const spec = process.platform === 'win32'
+    ? windowsSpawnSpec(execCmd, claudeArgs, env.PATH || env.Path || '')
+    : { file: execCmd, args: claudeArgs, options: {} };
+  const result = spawnSync(spec.file, spec.args, {
     stdio: 'inherit',
-    shell: process.platform === 'win32',
+    ...spec.options,
     env,
   });
 

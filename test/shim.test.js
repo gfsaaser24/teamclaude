@@ -91,3 +91,46 @@ test('findRealClaude skips the shim dir and marker files, prefers .exe', async (
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// ── argv-safe Windows launch ────────────────────────────────
+
+import { spawnSync } from 'node:child_process';
+import { escapeCmdArg, windowsSpawnSpec } from '../src/shim.js';
+
+test('escapeCmdArg quotes spaces and caret-escapes cmd metachars', () => {
+  assert.equal(escapeCmdArg('say hi'), '^"say^ hi^"');
+  assert.equal(escapeCmdArg('a&b'), '^"a^&b^"');
+  assert.equal(escapeCmdArg('x', true), '^^^"x^^^"');
+});
+
+test('windowsSpawnSpec spawns a real .exe directly, skipping the shim dir', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tc-spawn-'));
+  try {
+    const shims = join(root, 'shims');
+    const real = join(root, 'real');
+    await mkdir(shims); await mkdir(real);
+    await writeFile(join(shims, 'claude.cmd'), `@echo off\r\nrem ${MARKER}\r\n`);
+    await writeFile(join(real, 'claude.exe'), '');
+    const spec = windowsSpawnSpec('claude', ['-p', 'say hi'], `${shims};${real}`, shims);
+    assert.equal(spec.file, join(real, 'claude.exe'));
+    assert.deepEqual(spec.args, ['-p', 'say hi']);
+    assert.deepEqual(spec.options, {});
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('windowsSpawnSpec keeps argv intact through a .cmd launcher', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tc spawn '));
+  try {
+    const echo = join(root, 'echo.mjs');
+    await writeFile(echo, 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
+    await writeFile(join(root, 'tool.cmd'), `@echo off\r\nnode "${echo}" %*\r\n`);
+    const argv = ['-p', 'say hi & state your model', '{"a":"b c"}', '100%', 'x^y', 'trail\\', 'q"uote', ''];
+    const spec = windowsSpawnSpec('tool', argv, root, join(root, 'none'));
+    const out = spawnSync(spec.file, spec.args, { ...spec.options, encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(out.stdout), argv);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

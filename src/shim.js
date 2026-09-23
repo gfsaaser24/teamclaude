@@ -62,6 +62,43 @@ export function findRealClaude(pathStr = process.env.PATH || '', skipDir = shimD
   return findRealTool('claude', pathStr, skipDir);
 }
 
+// ── argv-safe Windows launch ────────────────────────────────
+//
+// `spawnSync(name, args, { shell: true })` joins args with bare spaces, so
+// `claude -p "say hi"` reached claude as `-p say hi` and SDK launchers' JSON /
+// prompt flags were shredded. Instead: spawn a real .exe directly (Node quotes
+// argv correctly), and only go through cmd.exe for .cmd/.bat launchers, with
+// every argument escaped for it (same scheme as cross-spawn).
+
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+
+/** Quote one argument for the MSVCRT parser, then caret-escape it for cmd.exe.
+ * `doubleEscape` for .cmd/.bat targets: cmd parses the line again when the
+ * batch file expands %*. */
+export function escapeCmdArg(arg, doubleEscape = false) {
+  let s = String(arg)
+    .replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
+    .replace(/(?=(\\+?)?)\1$/, '$1$1');
+  s = `"${s}"`.replace(CMD_META, '^$1');
+  return doubleEscape ? s.replace(CMD_META, '^$1') : s;
+}
+
+/**
+ * How to spawn `tool` with `args` on Windows so argv survives intact. Resolves
+ * past our own shim dir (the caller sets TEAMCLAUDE_RUN_GUARD anyway). Returns
+ * spawn(file, args, opts) inputs; unresolvable names fall back to cmd.exe
+ * resolution with escaped args.
+ */
+export function windowsSpawnSpec(tool, args, pathStr = process.env.PATH || '', skipDir = shimDir()) {
+  const real = findRealTool(tool, pathStr, skipDir);
+  if (real && real.toLowerCase().endsWith('.exe')) {
+    return { file: real, args, options: {} };
+  }
+  const target = real || tool;
+  const line = [target.replace(CMD_META, '^$1'), ...args.map(a => escapeCmdArg(a, true))].join(' ');
+  return { file: line, args: [], options: { shell: true } };
+}
+
 /** Whether bare `teamclaude` resolves on the current PATH (Windows launchers). */
 function teamclaudeOnPath() {
   for (const dir of (process.env.PATH || '').split(';')) {
