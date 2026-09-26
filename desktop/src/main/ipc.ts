@@ -79,7 +79,7 @@ function broadcast(channel: string, payload: unknown): void {
  * can't be found — so the launcher reports a real error instead of silently
  * "succeeding" through a shell (the old `shell:true` masked a missing `trae`).
  * Order: an explicit existing path → the command on PATH → known install for a
- * preset keyword ("trae" / "synara").
+ * preset keyword ("trae").
  */
 function resolveEditorExe(editorCommand: string): string | null {
   const cmd = editorCommand.trim()
@@ -93,14 +93,10 @@ function resolveEditorExe(editorCommand: string): string | null {
       .toString().trim().split(/\r?\n/)[0]
     if (found && existsSync(found)) return found
   } catch { /* not on PATH */ }
-  // 3. Known installs for the preset keywords — covers "trae"/"synara" when the
-  //    app's CLI shim was never added to PATH.
+  // 3. Known installs for the preset keyword — covers "trae" when the app's
+  //    CLI shim was never added to PATH.
   const local = process.env.LOCALAPPDATA
   if (local) {
-    if (/synara/i.test(cmd)) {
-      const c = join(local, 'Programs', 'synara-desktop', 'Synara.exe')
-      if (existsSync(c)) return c
-    }
     if (/trae/i.test(cmd)) {
       const candidates = [join(local, 'Programs', 'Trae', 'Trae.exe'), join(local, 'Programs', 'Trae CN', 'Trae CN.exe')]
       for (const c of candidates) if (existsSync(c)) return c
@@ -111,13 +107,12 @@ function resolveEditorExe(editorCommand: string): string | null {
 
 /**
  * Whether an editor reads `.vscode/tasks.json` — i.e. VS Code-family editors
- * (Trae, VS Code, Cursor, Windsurf, VSCodium). Synara and other non-VS-Code
- * editors don't, so the folderOpen auto-terminal is skipped for them; their
- * Claude still routes here via Auto-route's ANTHROPIC_BASE_URL env var.
+ * (Trae, VS Code, Cursor, Windsurf, VSCodium). Other non-VS-Code editors
+ * don't, so the folderOpen auto-terminal is skipped for them; their Claude
+ * still routes here via Auto-route's ANTHROPIC_BASE_URL env var.
  */
 function isVsCodeFamilyEditor(editorCommand: string): boolean {
   const c = editorCommand.trim().toLowerCase()
-  if (/synara/.test(c)) return false
   return /(trae|cursor|windsurf|codium|vscode|\bcode\b)/.test(c)
 }
 
@@ -285,7 +280,7 @@ export function registerIpc(deps: IpcDeps): () => void {
       }
       const exe = resolveEditorExe(settings.editorCommand)
       if (!exe) {
-        return { ok: false, error: `Editor "${settings.editorCommand}" not found. Pick Trae or Synara in Settings, or set the full path to its .exe.` }
+        return { ok: false, error: `Editor "${settings.editorCommand}" not found. Pick Trae in Settings, or set the full path to its .exe.` }
       }
       // A .cmd/.bat shim needs a shell; a real .exe is launched directly so a
       // failure surfaces as an error rather than being swallowed by the shell.
@@ -295,26 +290,6 @@ export function registerIpc(deps: IpcDeps): () => void {
       const useShell = /\.(cmd|bat)$/i.test(exe)
       const child = spawn(exe, [path], { shell: useShell, detached: true, stdio: 'ignore', cwd: path })
       child.on('error', () => { /* reported below via ok:false is not possible post-detach; logged */ })
-      child.unref()
-      return { ok: true, editor: exe }
-    } catch (err) {
-      return { ok: false, error: (err as Error).message }
-    }
-  })
-
-  // Launch Synara directly (no project) — the home-screen quick button. Synara
-  // has a single-instance lock, so a second launch just focuses the existing
-  // window; that's the intended "open Synara" behavior. cwd is the user's home
-  // so we never hold a lock on the packaged app dir (see tc:launcher:open note).
-  ipcMain.handle('tc:launcher:openSynara', async () => {
-    try {
-      const exe = resolveEditorExe('synara')
-      if (!exe) {
-        return { ok: false, error: 'Synara not found. Install it, or set its full path as a Custom editor in Settings.' }
-      }
-      const home = process.env.USERPROFILE || process.env.HOME || undefined
-      const child = spawn(exe, [], { detached: true, stdio: 'ignore', ...(home ? { cwd: home } : {}) })
-      child.on('error', () => { /* detached — surfaced via ok:false only pre-spawn */ })
       child.unref()
       return { ok: true, editor: exe }
     } catch (err) {
